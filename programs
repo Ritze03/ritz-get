@@ -9,6 +9,7 @@ ts6tray   Ritze03/ts6tray
 #cc-voice-detection    Ritze03/cc-voice-detection    (private repo, friends can't clone it)
 #ritz                  Ritze03/ritz
 #ForzaTelemetryV3      Ritze03/ForzaTelemetryV3
+#ForzaTelemetryV3Launcher Ritze03/ForzaTelemetryV3Launcher (Rust GUI; builds ForzaTelemetryV3 itself)
 #simple-screensharing  Ritze03/simple-screensharing
 #geofinder             Ritze03/geofinder
 #gamescope-ritz        Ritze03/gamescope-ritz        (builds from source, needs sudo)
