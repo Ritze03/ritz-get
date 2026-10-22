@@ -1,0 +1,190 @@
+#!/bin/sh
+# ritz-get - build, update and remove Ritze03's programs from git clones. POSIX sh.
+# Each program lives as a clone in $DATA/src/NAME; the clone is the state.
+# Env: RITZ_GET_GIT_BASE (default https://github.com, for tests)
+set -u
+DATA=${XDG_DATA_HOME:-$HOME/.local/share}/ritz-get
+SRCDIR=$DATA/src
+BASE=${RITZ_GET_GIT_BASE:-https://github.com}
+MF=$(dirname "$(readlink -f "$0")")/programs
+YES= BR=
+export GIT_TERMINAL_PROMPT=0
+
+err() { echo "ritz-get: $*" >&2; }
+die() { err "$*"; exit 1; }
+
+usage() {
+	cat <<'USAGE'
+usage: ritz-get COMMAND [OPTIONS]
+
+  list                            programs, what is installed, what is behind
+  install NAME... [--branch B]    clone, build and install
+  update [--yes] [NAME...]        update ritz-get, then rebuild programs that changed
+  branches NAME                   branches of the remote, current one marked
+  switch NAME BRANCH              check out another branch and rebuild
+  remove NAME                     uninstall and delete the clone
+  help
+USAGE
+}
+
+# lookup NAME: sets REPO and DEFBR from the manifest (NAME REPO [BRANCH])
+lookup() {
+	l=$(sed 's/#.*//' "$MF" | awk -v n="$1" '$1==n {print; exit}')
+	[ -n "$l" ] || { err "unknown program: $1 (see: ritz-get list)"; return 1; }
+	set -f; set -- $l; set +f
+	REPO=${2:-} DEFBR=${3:-}
+	[ -n "$REPO" ] || { err "$1: no repo in the manifest"; return 1; }
+}
+
+short() { git -C "$SRCDIR/$1" rev-parse --short HEAD; }
+branch() { git -C "$SRCDIR/$1" rev-parse --abbrev-ref HEAD; }
+behind() { git -C "$SRCDIR/$1" rev-list --count 'HEAD..@{u}' 2>/dev/null || echo 0; }
+is_installed() { [ -d "$SRCDIR/$1/.git" ]; }
+
+# build NAME: run the clone's install.sh --install; log tail on failure
+build() {
+	d=$SRCDIR/$1
+	[ -x "$d/install.sh" ] || { err "$1: no executable install.sh in the repo"; return 1; }
+	log=$TMP/$1.log
+	if (cd "$d" && ./install.sh --install --yes) </dev/null >"$log" 2>&1; then return 0; fi
+	err "$1: install.sh failed, last lines:"
+	tail -n 20 "$log" | sed 's/^/    /' >&2
+	return 1
+}
+
+install_one() {
+	lookup "$1" || return 1
+	if is_installed "$1"; then echo "$1: already installed ($(branch "$1") $(short "$1"))"; return 0; fi
+	b=${BR:-$DEFBR}
+	echo "$1: cloning $REPO${b:+ ($b)}"
+	mkdir -p "$SRCDIR" || return 1
+	# shellcheck disable=SC2086
+	git clone -q ${b:+-b "$b"} "$BASE/$REPO.git" "$SRCDIR/$1" || { rm -rf "${SRCDIR:?}/$1"; err "$1: clone failed"; return 1; }
+	echo "$1: building"
+	if build "$1"; then echo "$1: installed $(branch "$1") $(short "$1")"
+	else rm -rf "${SRCDIR:?}/$1"; return 1; fi
+}
+
+remove_one() {
+	[ "$1" != ritz-get ] || { err "to remove ritz-get run: $SRCDIR/ritz-get/install.sh --remove, then delete $DATA"; return 1; }
+	is_installed "$1" || { echo "$1: not installed"; return 0; }
+	if ! (cd "$SRCDIR/$1" && ./install.sh --remove --yes) </dev/null; then
+		err "$1: install.sh --remove failed, clone kept"; return 1
+	fi
+	rm -rf "${SRCDIR:?}/$1" && echo "$1: removed"
+}
+
+# self_update ARGS...: pull ritz-get's own clone, re-exec if it changed
+self_update() {
+	d=$SRCDIR/ritz-get
+	[ -d "$d/.git" ] && [ -z "${RITZ_GET_SELF_UPDATED:-}" ] || return 0
+	o=$(git -C "$d" rev-parse HEAD)
+	git -C "$d" pull --ff-only -q || { err "ritz-get: cannot update itself (local changes?), continuing"; return 0; }
+	[ "$o" != "$(git -C "$d" rev-parse HEAD)" ] || return 0
+	echo "ritz-get: updated itself, restarting"
+	RITZ_GET_SELF_UPDATED=1 exec "$d/ritz-get" "$@"
+}
+
+cmd_list() {
+	printf '%-22s %-10s %-14s %-9s %s\n' NAME INSTALLED BRANCH COMMIT STATUS
+	for n in $(sed 's/#.*//' "$MF" | awk 'NF {print $1}'); do
+		if is_installed "$n"; then
+			b=$(behind "$n"); s=up-to-date
+			[ "$b" -eq 0 ] || s="behind by $b (ritz-get update)"
+			printf '%-22s %-10s %-14s %-9s %s\n' "$n" yes "$(branch "$n")" "$(short "$n")" "$s"
+		else
+			printf '%-22s %-10s\n' "$n" no
+		fi
+	done
+}
+
+cmd_install() {
+	[ $# -gt 0 ] || die "install: no program given"
+	rc=0
+	for n; do install_one "$n" || rc=1; done
+	return $rc
+}
+
+cmd_remove() {
+	[ $# -gt 0 ] || die "remove: no program given"
+	rc=0
+	for n; do remove_one "$n" || rc=1; done
+	return $rc
+}
+
+cmd_branches() {
+	[ $# -eq 1 ] || die "usage: ritz-get branches NAME"
+	if is_installed "$1"; then u=$(git -C "$SRCDIR/$1" remote get-url origin); c=$(branch "$1")
+	else lookup "$1" || return 1; u=$BASE/$REPO.git c=; fi
+	git ls-remote --heads "$u" | sed 's|.*refs/heads/||' | while read -r b; do
+		if [ "$b" = "$c" ]; then echo "* $b"; else echo "  $b"; fi
+	done
+}
+
+cmd_switch() {
+	[ $# -eq 2 ] || die "usage: ritz-get switch NAME BRANCH"
+	is_installed "$1" || die "$1 is not installed"
+	d=$SRCDIR/$1 old=$(branch "$1")
+	git -C "$d" fetch -q || { err "$1: fetch failed"; return 1; }
+	git -C "$d" checkout -q "$2" 2>/dev/null || { err "$1: cannot check out '$2' (see: ritz-get branches $1)"; return 1; }
+	git -C "$d" merge --ff-only -q '@{u}' 2>/dev/null
+	echo "$1: building $2"
+	if build "$1"; then echo "$1: now on $2 $(short "$1")"
+	else git -C "$d" checkout -q "$old"; err "$1: back on $old (still the old build)"; return 1; fi
+}
+
+cmd_update() {
+	rc=0 todo=
+	if [ $# -eq 0 ]; then
+		for d in "$SRCDIR"/*/; do
+			n=$(basename "$d")
+			[ "$n" != ritz-get ] && is_installed "$n" && set -- "$@" "$n"
+		done
+		[ $# -gt 0 ] && [ -d "$SRCDIR/$1" ] || { echo "no programs installed"; return 0; }
+	fi
+	for n; do
+		is_installed "$n" || { err "$n: not installed"; rc=1; continue; }
+		git -C "$SRCDIR/$n" fetch -q || { echo "$n: FAILED (fetch)"; rc=1; continue; }
+		if [ "$(behind "$n")" -eq 0 ]; then echo "$n: up to date ($(short "$n"))"; else todo="$todo $n"; fi
+	done
+	[ -n "$todo" ] || return $rc
+	if [ -z "$YES" ]; then
+		echo "Will rebuild:$todo"
+		printf 'Continue? [y/N] '
+		read -r a || a=
+		case $a in y|Y|yes) ;; *) echo aborted; return $rc ;; esac
+	fi
+	for n in $todo; do
+		d=$SRCDIR/$n o=$(git -C "$d" rev-parse HEAD)
+		git -C "$d" pull --ff-only -q || { echo "$n: SKIPPED (cannot fast-forward: local changes or rewritten branch)"; rc=1; continue; }
+		if build "$n"; then echo "$n: updated $(git -C "$d" rev-parse --short "$o") -> $(short "$n")"
+		else git -C "$d" reset -q --keep "$o"; echo "$n: FAILED (build; reverted to $(short "$n"), will retry next update)"; rc=1; fi
+	done
+	return $rc
+}
+
+cmd=${1:-help}
+[ $# -gt 0 ] && shift
+[ "$cmd" = update ] && self_update update "$@"
+n=$#
+while [ "$n" -gt 0 ]; do
+	a=$1; shift; n=$((n - 1))
+	case $a in
+	--yes|-y) YES=1 ;;
+	--branch|-b) [ $# -gt 0 ] || die "$a needs a branch"; BR=$1; shift; n=$((n - 1)) ;;
+	-h|--help) cmd=help ;;
+	-*) die "unknown option: $a" ;;
+	*) set -- "$@" "$a" ;;
+	esac
+done
+case $cmd in
+help) usage; exit 0 ;;
+list|install|update|branches|switch|remove) ;;
+*) usage >&2; exit 2 ;;
+esac
+[ -r "$MF" ] || die "manifest not found: $MF"
+
+TMP=$(mktemp -d) || die "mktemp failed"
+trap 'rm -rf "$TMP"' EXIT
+trap 'exit 130' INT TERM HUP
+"cmd_$cmd" "$@"

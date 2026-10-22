@@ -1,0 +1,15 @@
+# NAME REPO [BRANCH]
+#   REPO   owner/name on GitHub; the repo must have an executable ./install.sh
+#   BRANCH branch to clone, default: the remote's default branch
+ritz-get  Ritze03/ritz-get
+ccorral   Ritze03/ccorral
+ts6tray   Ritze03/ts6tray
+
+#yt-dlp-gui            Ritze03/yt-dlp-gui            (cgo, needs Gio dev libs)
+#cc-voice-detection    Ritze03/cc-voice-detection    (private repo, friends can't clone it)
+#ritz                  Ritze03/ritz
+#ForzaTelemetryV3      Ritze03/ForzaTelemetryV3
+#simple-screensharing  Ritze03/simple-screensharing
+#geofinder             Ritze03/geofinder
+#gamescope-ritz        Ritze03/gamescope-ritz        (builds from source, needs sudo)
+# yt-dlp: third-party, later
