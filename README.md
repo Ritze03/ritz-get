@@ -99,4 +99,4 @@ Two templates to copy and edit, both with a required-tools check and distro hint
 
 ## License
 
-TODO
+MIT, see [LICENSE](LICENSE).
