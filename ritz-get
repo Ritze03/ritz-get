@@ -41,14 +41,12 @@ branch() { git -C "$SRCDIR/$1" rev-parse --abbrev-ref HEAD; }
 behind() { git -C "$SRCDIR/$1" rev-list --count 'HEAD..@{u}' 2>/dev/null || echo 0; }
 is_installed() { [ -d "$SRCDIR/$1/.git" ]; }
 
-# build NAME: run the clone's install.sh --install; log tail on failure
+# build NAME: run the clone's install.sh --install, output straight to the terminal
 build() {
 	d=$SRCDIR/$1
 	[ -x "$d/install.sh" ] || { err "$1: no executable install.sh in the repo"; return 1; }
-	log=$TMP/$1.log
-	if (cd "$d" && ./install.sh --install --yes) </dev/null >"$log" 2>&1; then return 0; fi
-	err "$1: install.sh failed, last lines:"
-	tail -n 20 "$log" | sed 's/^/    /' >&2
+	(cd "$d" && ./install.sh --install --yes) </dev/null && return 0
+	err "$1: install.sh failed (exit $?)"
 	return 1
 }
 
@@ -184,7 +182,4 @@ list|install|update|branches|switch|remove) ;;
 esac
 [ -r "$MF" ] || die "manifest not found: $MF"
 
-TMP=$(mktemp -d) || die "mktemp failed"
-trap 'rm -rf "$TMP"' EXIT
-trap 'exit 130' INT TERM HUP
 "cmd_$cmd" "$@"
