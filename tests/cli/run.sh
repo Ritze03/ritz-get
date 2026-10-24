@@ -653,15 +653,15 @@ rg remove subby >/dev/null; gone "remove: clone with submodule deleted" "$SB"
 # ---- the real programs file ------------------------------------------------------------
 rge RITZ_GET_MANIFEST="$ROOT/programs" list --offline --porcelain; rc "real programs file parses" 0
 names() { awk -F'\t' '$1 == "E" { print $3 }' "$T/out" | tr '\n' ' ' | sed 's/ $//'; }
-eq "real programs: sections in order" "Helpers Websites Other" "$(awk -F'\t' '$1 == "E" { print $2 }' "$T/out" | uniq | tr '\n' ' ' | sed 's/ $//')"
-eq "real programs: entries" "ritz-get ccorral ts6tray cs2-alias-cycling cs2-chat-keybind cs2-multimap simple-screensharing-web walters-knaggertreff ts6-themes" "$(names)"
+eq "real programs: sections in order" "Software Helpers Websites Other" "$(awk -F'\t' '$1 == "E" { print $2 }' "$T/out" | uniq | tr '\n' ' ' | sed 's/ $//')"
+eq "real programs: entries" "yt-dlp-gui ritz ForzaTelemetryV3Launcher simple-screensharing geofinder SteamAlt ritz-get ccorral ts6tray cs2-alias-cycling cs2-chat-keybind cs2-multimap simple-screensharing-web walters-knaggertreff ts6-themes" "$(names)"
 eq "real programs: ts6tray setup lines" 2 "$(awk -F'\t' '$1 == "S" && $2 == "ts6tray"' "$T/out" | wc -l | tr -d ' ')"
 eq "real programs: descriptions 1-80 chars without quote, titles <= 40" 0 "$(awk -F'\t' '$1 == "E" && (length($16) < 1 || length($16) > 80 || $16 ~ /"/ || length($4) > 40 || length($4) < 1)' "$T/out" | wc -l | tr -d ' ')"
 eq "real programs: websites have URLs" 6 "$(awk -F'\t' '$1 == "E" && $5 == "website" && $6 ~ /^https:\/\//' "$T/out" | wc -l | tr -d ' ')"
 sed -e 's/^#\([A-Za-z]\)/\1/' -e 's/^#  title:/  title:/' "$ROOT/programs" >"$T/programs.all"
 rge RITZ_GET_MANIFEST="$T/programs.all" list --offline --porcelain; rc "programs with Software enabled" 0
 eq "Software order" "Software Helpers Websites Other" "$(awk -F'\t' '$1 == "E" { print $2 }' "$T/out" | uniq | tr '\n' ' ' | sed 's/ $//')"
-eq "Software entries" "yt-dlp-gui ritz ForzaTelemetryV3Launcher simple-screensharing geofinder gamescope-ritz SteamAlt" "$(awk -F'\t' '$1 == "E" && $2 == "Software" { print $3 }' "$T/out" | tr '\n' ' ' | sed 's/ $//')"
+eq "Software entries" "yt-dlp-gui ritz ForzaTelemetryV3Launcher simple-screensharing geofinder SteamAlt gamescope-ritz" "$(awk -F'\t' '$1 == "E" && $2 == "Software" { print $3 }' "$T/out" | tr '\n' ' ' | sed 's/ $//')"
 eq "SteamAlt title" "Steam Userdata Mover" "$(fld SteamAlt 4)"
 eq "Software entries: valid description and title" 0 "$(awk -F'\t' '$1 == "E" && (length($16) < 1 || length($16) > 80 || $16 ~ /"/ || length($4) > 40)' "$T/out" | wc -l | tr -d ' ')"
 
