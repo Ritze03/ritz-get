@@ -125,7 +125,10 @@ EOF
 		  HOME=$H XDG_CONFIG_HOME=$H/xdg/config XDG_DATA_HOME=$H/xdg/data XDG_CACHE_HOME=$H/xdg/cache XDG_STATE_HOME=$H/xdg/state
 		  XDG_RUNTIME_DIR=$T/run RITZ_GET_SPEC=1 RITZ_GET_SUDO=$SUDO NO_COLOR=1 TERM=dumb PATH=$P GIT_TERMINAL_PROMPT=0
 		  SPEC_SUDO_LOG=$T/sudo.log SPEC_NAME=$NAME
-		  export HOME XDG_CONFIG_HOME XDG_DATA_HOME XDG_CACHE_HOME XDG_STATE_HOME XDG_RUNTIME_DIR RITZ_GET_SPEC RITZ_GET_SUDO \
+		  # an implicit Vulkan layer (lsfg-vk) writes $XDG_CONFIG_HOME/lsfg-vk/conf.toml whenever Vulkan loads,
+		  # which looks like a stray config file (false R13/R22/R23 FAILs); keep that layer out of the runs
+		  VK_LOADER_LAYERS_DISABLE='*LS_frame_generation*'
+		  export VK_LOADER_LAYERS_DISABLE HOME XDG_CONFIG_HOME XDG_DATA_HOME XDG_CACHE_HOME XDG_STATE_HOME XDG_RUNTIME_DIR RITZ_GET_SPEC RITZ_GET_SUDO \
 			NO_COLOR TERM PATH GIT_TERMINAL_PROMPT SPEC_SUDO_LOG SPEC_NAME
 		  if [ -n "$TMO" ]; then exec "$TMO" "$LIMIT" ./install.sh "$@"; else exec ./install.sh "$@"; fi
 		) </dev/null >"$T/$l.out" 2>"$T/$l.err"
@@ -155,6 +158,14 @@ EOF
 		stray=$(files | grep -E "^$H/(\.config|\.local/share)/" | grep -v "^$H/\.local/share/ritz-get/links/" || true)
 		[ -z "$stray" ] && ok R14 "XDG_* honoured (nothing in ~/.config or ~/.local/share)" || bad R14 "ignores XDG_CONFIG_HOME/XDG_DATA_HOME: $(echo "$stray" | tr '\n' ';')"
 	}
+	missing_lines() {                               # missing_lines LOG LABEL: R26 shape of the missing: lines in $T/LOG.err
+		badlines=$(grep '^missing:' "$T/$1.err" | grep -Ev '^missing: [^ ]+ \(try: ([a-z]+:[A-Za-z0-9+._,-]+)( [a-z]+:[A-Za-z0-9+._,-]+)*\)$' || true)
+		groups=$(grep '^missing:' "$T/$1.err" | grep -Eo '(pacman|dnf|apt):(base-devel|build-essential|base|@[^ )]*)([ ,)]|$)' || true)
+		if ! grep -q '^missing:' "$T/$1.err"; then bad R26 "no 'missing: TOOL (try: pacman:PKG dnf:PKG apt:PKG)' line on stderr"
+		elif [ -n "$badlines" ]; then bad R26 "malformed missing line: $badlines"
+		elif [ -n "$groups" ]; then bad R26 "hint names a package group, not a concrete package (pacman:gcc, not pacman:base-devel): $groups"
+		else ok R26 "$2 are well-formed, with concrete packages"; fi
+	}
 	git_clean() { [ "$(git -C "$C" status --porcelain)" = "$base" ] && ok R6 "$1: git status unchanged" || bad R6 "$1 changed git status; git-ignore build output (/build/): $(git -C "$C" status --porcelain | tr '\n' ';')"; }
 
 	# ---- 3. arguments, remove when nothing is installed ---------------------------------------
@@ -173,15 +184,21 @@ EOF
 		for t in $hide; do rm -f "$T/path/$t"; done
 		P=$T/path; run miss --install --yes; P=$PATH
 		if timed_out "missing-tool run"; then :; elif [ $rc -eq 3 ]; then ok R25 "missing tool exits 3"; else bad R25 "hiding '$hide': exit $rc, want 3. $(errtail miss)"; fi
-		badlines=$(grep '^missing:' "$T/miss.err" | grep -Ev '^missing: [^ ]+ \(try: ([a-z]+:[A-Za-z0-9+._,-]+)( [a-z]+:[A-Za-z0-9+._,-]+)*\)$' || true)
-		if ! grep -q '^missing:' "$T/miss.err"; then bad R26 "no 'missing: TOOL (try: pacman:PKG dnf:PKG apt:PKG)' line on stderr"
-		elif [ -n "$badlines" ]; then bad R26 "malformed missing line: $badlines"
-		else ok R26 "missing: lines are well-formed"; fi
+		missing_lines miss "missing: lines"
 		for t in $hide; do grep -q "^missing: $t " "$T/miss.err" || bad R26 "no 'missing: $t (try: ...)' line, but $t was hidden"; done
 		[ -z "$(files)" ] && ok R21 "exit 3 changed nothing" || bad R21 "exit 3 left files: $(files | tr '\n' ';')"
 		git_clean "exit 3 run"
 	else
 		skip R21 "exit-3 test (no tool to hide; pass build tools after the repo path, e.g. sh spec-check.sh . go)"
+	fi
+
+	# exit 3 for pkg-config libraries: no library is found any more (only if install.sh uses need_pc)
+	if printf '%s\n' "$code" | grep -Eq '(^|[;{[:space:]])need_pc[[:space:]]+[^[:space:](]'; then
+		export PKG_CONFIG_LIBDIR=/nonexistent PKG_CONFIG_PATH=; run pc --install --yes; unset PKG_CONFIG_LIBDIR PKG_CONFIG_PATH
+		if timed_out "no-library run"; then :; elif [ $rc -eq 3 ]; then ok R25 "missing pkg-config library exits 3"; else bad R25 "no pkg-config library found: exit $rc, want 3. $(errtail pc)"; fi
+		missing_lines pc "no-library missing: lines"
+		[ -z "$(files)" ] && ok R21 "exit 3 (library) changed nothing" || bad R21 "exit 3 (library) left files: $(files | tr '\n' ';')"
+		git_clean "exit 3 (library) run"
 	fi
 
 	# ---- 5. programs that use root ------------------------------------------------------------
@@ -227,6 +244,11 @@ EOF
 	if timed_out "second install"; then :; elif [ $rc -eq 0 ]; then ok R17 "second install exits 0"; else bad R17 "second install exits $rc: $(errtail i2)"; fi
 	clean_out i2; git_clean "second install"
 	[ "$(snap)" = "$s1" ] && ok R17 "idempotent: same paths and link targets after the second install" || bad R17 "the second install changed the paths/links: $(snap | diff - - 2>/dev/null; echo)"
+	# R30: a background part (autostart link or systemd unit made by the first install) -> later runs print restart:
+	if files | grep -Eq '/(autostart|systemd/user)/'; then
+		grep -q '^restart:' "$T/i2.out" "$T/i2.err" && ok R30 "background part present: the second install prints a 'restart:' line" \
+			|| bad R30 "autostart/systemd link exists but the second install prints no 'restart: NAME to use the new version' line (unconditional on later runs)"
+	fi
 	if [ -n "$HOOK" ]; then $HOOK; fi
 
 	# ---- 7. the repo folder moves, install again: every link must follow ----------------------
@@ -286,10 +308,12 @@ svc_hook() {   # R20: an update must not bring back an autostart entry the user 
 	if [ $rc -eq 0 ] && [ ! -e "$H/xdg/config/autostart/$NAME.desktop" ] && [ -L "$H/xdg/config/systemd/user/$NAME.service" ]; then
 		ok R20 "update keeps the user's autostart opt-out and refreshes the unit"
 	else bad R20 "update after removing the autostart entry: exit $rc, autostart back? $(ls "$H/xdg/config/autostart" 2>&1 | tr '\n' ' ')"; fi
-	grep -q '^restart:' "$T/upd.out" && ok R30 "update prints a 'restart:' hint" || bad R30 "update prints no 'restart: ...' line"
+	grep -q '^restart:' "$T/upd.out" && ok R30 "update after the opt-out still prints a 'restart:' hint" || bad R30 "update prints no 'restart: ...' line"
 }
 swap_hook() {  # P3: repeated builds keep at most the current and the previous directory
+	mkdir -p "$C/build/stale"; ln -sfn stale "$C/build/.current.new"   # a stale temp link to a directory must not fool the swap
 	run s1 --install --yes; run s2 --install --yes
+	[ -z "$(ls -A "$C/build/stale")" ] && ok R18 "a stale build/.current.new link does not capture the new link" || bad R18 "ln without -n created the swap link inside the old directory (use ln -sfn)"
 	n=$(ls -d "$C"/build/app-* 2>/dev/null | wc -l)
 	[ "$n" -le 2 ] && [ "$n" -ge 1 ] && [ -x "$H/.local/bin/$NAME" ] && ok R18 "directory swap keeps $n app dir(s) and a working command" || bad R18 "directory swap left $n app dirs"
 }
@@ -302,7 +326,7 @@ selftest() {
 	mkdir "$S/bin"
 	# a build tool and a pkg-config the fixtures need (a fake pkg-config knows one library)
 	printf '#!/bin/sh\nprintf "#!/bin/sh\\necho fixture\\n"\n' > "$S/bin/ritz-fixture-tool"
-	printf '#!/bin/sh\n[ "$1" = --exists ] && [ "$2" = ritz-fixture-lib ]\n' > "$S/bin/pkg-config"
+	printf '#!/bin/sh\n[ "${PKG_CONFIG_LIBDIR:-}" != /nonexistent ] && [ "$1" = --exists ] && [ "$2" = ritz-fixture-lib ]\n' > "$S/bin/pkg-config"
 	chmod +x "$S/bin/ritz-fixture-tool" "$S/bin/pkg-config"
 	PATH=$S/bin:$PATH; export PATH
 	GIT_ALLOW_PROTOCOL=file; export GIT_ALLOW_PROTOCOL	# the fixture submodule is a local repo; only the self-test allows file://
@@ -397,7 +421,8 @@ build() {
 	prev=$(readlink build/current 2>/dev/null || true)
 	new=app-$(date +%s)-$$
 	cp -a dist/unpacked "build/$new"
-	ln -sfn "$new" build/.current.new && mv -fT build/.current.new build/current
+	ln -sfn "$new" build/.current.new
+	mv -fT build/.current.new build/current
 	for d in build/app-*; do
 		case ${d#build/} in "$new"|"$prev") ;; *) rm -rf "$d" ;; esac
 	done

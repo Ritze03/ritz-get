@@ -187,7 +187,8 @@ A human may also run `./install.sh --install` or `--remove` by hand, without `--
   is `MANAGER:PKG`, space-separated, with MANAGER one of `pacman`, `dnf`, `apt`. `PKG` is the
   package name for that manager; several packages are joined by commas with no spaces
   (`dnf:gcc,pkg-config,wayland-devel`). Leave a manager out when you do not know the package; list
-  at least one. Example:
+  at least one. Hints MUST name **concrete packages, never package groups**: `pacman:gcc`, not
+  `pacman:base-devel`; `apt:gcc,make`, not `apt:build-essential`; no dnf `@group`. Example:
 
   ```
   missing: go (try: pacman:go dnf:golang apt:golang-go)
@@ -206,15 +207,17 @@ A human may also run `./install.sh --install` or `--remove` by hand, without `--
 ### 2.7 Background parts
 
 - **R29** A program with a **systemd user service** MUST, on `--install`, generate the unit into
-  `build/` and link it with a plain `ln -s` (the template's `link`) into
+  `build/` and link it with a plain symlink (the template's `link`, never `systemctl --user link`) into
   `$XDG_CONFIG_HOME/systemd/user/` (pattern P5). Every call to the user manager MUST be guarded
   by `systemctl --user show-environment` and be best effort: with no reachable user manager
   (cron, a throwaway HOME) it prints a `restart:` line and still exits 0. With one, a first
   install runs `daemon-reload` and `enable --now`; later runs run `daemon-reload` and
   `try-restart`. `--remove` disables and stops the service first, then removes the links.
 - **R30** A background part that is not a systemd service (a tray app started by autostart) MUST
-  NOT be started or stopped by `install.sh`. On a later run it MUST print one line
-  `restart: NAME to use the new version`; on a first install it SHOULD print how to start it.
+  NOT be started or stopped by `install.sh`. On every later run (not a first install, R20) it MUST
+  print one line `restart: NAME to use the new version`, **unconditionally**: whether or not the
+  program is running, and without trying to find out. On a first install it SHOULD print how to
+  start it.
 - **R31** `install.sh` MUST NOT start the program in the foreground or leave a process running
   after it exits, apart from the systemd service.
 
@@ -279,7 +282,11 @@ updates never wait for a password. The template does all of it when you set `ROO
 - **R38** The program itself MUST NOT contain a self-installer: no `install` / `uninstall`
   subcommand, no code that copies itself into `~/.local/bin` or writes autostart entries,
   launchers or units. `install.sh` does all of it. If the repo has one, the port removes it, with
-  its code and tests, and points the README at `install.sh` (section 8).
+  its code and tests, and points the README at `install.sh` (section 8). This does not forbid the
+  program from creating **its own user configuration** at run time, outside the clone: for example
+  a daemon that writes a systemd slice or a config file under `~/.config` once, if it is missing,
+  and never overwrites it. That is user config, so it stays on `--remove` (R22). `install.sh`
+  itself never writes such files (R13).
 
 ---
 
@@ -379,7 +386,8 @@ build() {
 	prev=$(readlink build/current 2>/dev/null || true)
 	new=app-$(date +%s)-$$
 	cp -a dist/linux-unpacked "build/$new"
-	ln -sfn "$new" build/.current.new && mv -fT build/.current.new build/current
+	ln -sfn "$new" build/.current.new
+	mv -fT build/.current.new build/current
 	for d in build/app-*; do
 		case ${d#build/} in "$new"|"$prev") ;; *) rm -rf "$d" ;; esac
 	done
@@ -388,6 +396,12 @@ install_files() { link "$dir/$TARGET" "$bin/$NAME"; }
 ```
 
 `mv -T` (GNU coreutils) renames the link itself instead of moving it into the directory.
+
+Keep `ln` and `mv` on **separate lines**: in `ln ... && mv ...` a failing `ln` does not stop the
+script, because `set -e` ignores failures inside an `&&` list. Always use `ln -sfn` for the
+temporary link, never plain `ln -s`: if a stale `build/.current.new` link to a directory is left
+over, plain `ln -s` creates the new link *inside* that old directory and the swap silently does
+nothing.
 
 ### P4. Generated autostart entry (tray app)
 
@@ -420,7 +434,7 @@ remove_files() {
 
 ### P5. systemd user service
 
-The unit is generated into `build/` and linked with a plain `ln -s` (`link`), **not** with
+The unit is generated into `build/` and linked with a plain symlink (`link`), **not** with
 `systemctl --user link`: the manager would write into the real home whatever `$HOME` is, so a
 test in a throwaway HOME would touch the real system. The link follows `$HOME`; the manager is
 only asked when it is reachable (R29). `%h` keeps the unit machine-independent.
@@ -604,6 +618,10 @@ Everything after the repo path is a build tool to hide for the exit-3 test (`go`
 `PASS`/`FAIL`/`SKIP` line per check, and a FAIL names the rule it breaks. **Done means the last
 line is `ALL PASS`.** `install.sh` must be committed or at least `git add`ed (R1). If the script
 reports `SKIP` for a missing build tool, install the tool and run it again.
+The script sets `VK_LOADER_LAYERS_DISABLE='*LS_frame_generation*'` for its runs: that implicit
+Vulkan layer (lsfg-vk) writes `$XDG_CONFIG_HOME/lsfg-vk/conf.toml` whenever Vulkan loads, which
+would look like a stray config file. If another host layer or library writes config files on
+load, a FAIL naming such a file is not your bug; check that `install.sh` did not cause it.
 
 What it checks:
 
@@ -619,7 +637,13 @@ What it checks:
 - no question, colour or `\r` in the output with `--yes`, and no hang on a prompt (stdin is
   `/dev/null`) (R10, R28)
 - an unknown argument, no argument, or both modes exit 2 (R9)
-- with a build tool hidden: exit 3, well-formed `missing:` lines, nothing changed (R21, R25, R26)
+- with a build tool hidden: exit 3, well-formed `missing:` lines naming concrete packages (no
+  `base-devel` / `build-essential`), nothing changed (R21, R25, R26)
+- if `install.sh` uses `need_pc`: one more `--install` with `PKG_CONFIG_LIBDIR=/nonexistent
+  PKG_CONFIG_PATH=` (no library is found): exit 3, well-formed `missing:` lines, nothing changed
+  (R21, R25, R26)
+- if the first install created an autostart link or a systemd unit: the second install prints a
+  `restart:` line (R30)
 - `--remove --yes`: exit 0 with the build tools hidden, config and data survive, nothing is left
   behind, exit 0 again, exit 0 on a partly installed program (R22 to R24)
 - programs that use root (`ROOT_LINK=yes`): exit 4 and `needs root:` without a password helper;
@@ -635,9 +659,10 @@ Not covered by the script. Read your `install.sh` and your diff once more:
 - [ ] Every build output reaches its final name only through `mv` (R18).
 - [ ] With `--yes` no code path reads stdin (R10).
 - [ ] The program has no `install` / `uninstall` subcommand left, and no code that copies itself
-      or writes autostart files or units (R38).
+      or writes autostart files or units (R38). Its own user config written at run time is fine.
 - [ ] A background part uses P5 (service) or P4 plus the restart line (tray). Nothing is started
-      by hand (R29 to R31).
+      by hand (R29 to R31). The `restart:` line on later runs does not depend on the program
+      running (R30).
 - [ ] A systemd service works on a real session: the script cannot reach a real user manager.
 - [ ] Root (P6 only): the link is created once, an update afterwards needs no root, `--remove`
       deletes it. Needs a real machine with `sudo`.
@@ -652,9 +677,18 @@ Not covered by the script. Read your `install.sh` and your diff once more:
   the removal of a self-installer with its code and tests (R38), and the README change below. It
   does not contain `icon.png` unless the repo already has it on the branch you started from: icons
   come from the maintainer.
-- The PR body lists what was removed and pastes the check script's output (the PASS lines and
-  `ALL PASS`). If `icon.png` is missing, the body says `waiting for icon.png` and the PR stays
-  open.
+- The PR body lists what was removed and pastes the check script's **full** output: every
+  `PASS` / `SKIP` line as printed, then `ALL PASS`. No abbreviation, no "all checks pass". If
+  `icon.png` is missing, the body says `waiting for icon.png` and the PR stays open.
+- Before opening the PR, check that it adds no stray tracked files (debug output, scratch files,
+  build output): run `git diff --stat origin/<default-branch>...HEAD` and read the file list. Every
+  file in it must be one of the items above.
+- **Migration.** If the port removes an old self-installer that wrote regular files (a copied
+  binary in `~/.local/bin`, a `.desktop` in `~/.local/share/applications`, an autostart file),
+  say so in the PR body and in the README. `--remove` only deletes symlinks into the clone, so it
+  cannot delete files it did not link; users upgrading from the old install may have to delete
+  them by hand (name the paths). `--install` itself is fine over them: `ln -sfn` replaces an old
+  copied file at the same path (R17).
 - README: keep the quick start's shape and make it work after the self-installer is gone. Any
   `NAME install` / `NAME uninstall` step becomes `ritz-get install NAME` (the main way) and
   `./install.sh --install` / `./install.sh --remove` (without ritz-get). Change nothing else in the

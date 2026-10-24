@@ -25,6 +25,7 @@ ROOT_LINK=no                    # yes: also link /usr/local/bin/NAME (needs root
 #   need TOOL     pacman:PKG dnf:PKG apt:PKG        a command; PKG may be several packages joined by commas
 #   need_pc LIB   pacman:PKG dnf:PKG apt:PKG        a pkg-config library (adds pkg-config itself as a tool)
 # Leave out a package manager you do not know. Do not detect the distro here: ritz-get does that.
+# PKG is always a concrete package, never a group: pacman:gcc, not pacman:base-devel; apt:gcc,make, not apt:build-essential.
 check_tools() {
 	need go pacman:go dnf:golang apt:golang-go
 	# need_pc wayland-client pacman:wayland dnf:wayland-devel apt:libwayland-dev
