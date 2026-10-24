@@ -4,14 +4,16 @@
 # Output contract for the GUI: PORCELAIN.md. Env: RITZ_GET_GIT_BASE (default https://github.com),
 # RITZ_GET_MANIFEST, RITZ_GET_TIMEOUT (seconds, default 3600), RITZ_GET_OS_RELEASE (all for tests),
 # RITZ_GET_GUI (set by the GUI), RITZ_GET_SUDO (pkexec from the GUI).
+# Config (${XDG_CONFIG_HOME:-~/.config}/ritz-get/config): dir= (repo folder), shortcuts= (start-menu folder).
 set -u
 SPEC=1
 US=$(printf '\037')
 BASE=${RITZ_GET_GIT_BASE:-https://github.com}
-MF=${RITZ_GET_MANIFEST:-$(dirname "$(readlink -f "$0")")/programs}
+MYDIR=$(dirname "$(readlink -f "$0")")
+MF=${RITZ_GET_MANIFEST:-$MYDIR/programs}
 CFGF=${XDG_CONFIG_HOME:-$HOME/.config}/ritz-get/config
 CACHE=${XDG_CACHE_HOME:-$HOME/.cache}/ritz-get
-YES= BR= OFFLINE= ALL= PORC= EXPL= WANT=
+YES= BR= OFFLINE= ALL= PORC= EXPL= WANT= REMOVEF=
 EXIT=0 UP=0 SK=0 FL=0 FNAMES=
 export GIT_TERMINAL_PROMPT=0 GIT_HTTP_LOW_SPEED_LIMIT=1000 GIT_HTTP_LOW_SPEED_TIME=30
 
@@ -38,12 +40,29 @@ usage: ritz-get COMMAND [OPTIONS]
   switch NAME BRANCH              check out another branch and rebuild
   reset NAME [--yes]              discard local changes: re-clone and rebuild
   hold NAME | unhold NAME         leave NAME out of 'update' without a name
+  open NAME                       open a website in your browser
+  shortcut NAME [--remove]        add (or remove) a start-menu shortcut
+  shortcuts [PATH]                show, or move, the folder the shortcuts live in
+  dir [PATH] [--yes]              show, or move, the folder the programs are cloned into
   help
 USAGE
 }
 
 # ---- config, manifest ------------------------------------------------------------------
 cfg() { [ -r "$CFGF" ] && sed -n "s/^$1=//p" "$CFGF" | tail -n 1; }
+# setcfg KEY VALUE: set one key, keep the others
+setcfg() {
+	mkdir -p "$(dirname "$CFGF")" || return 1
+	{ [ ! -r "$CFGF" ] || grep -v "^$1=" "$CFGF"; echo "$1=$2"; } >"$CFGF.new" && mv -f "$CFGF.new" "$CFGF"
+}
+# abspath P: ~ expanded, made absolute, trailing slashes dropped
+abspath() {
+	case $1 in "~") set -- "$HOME" ;; "~/"*) set -- "$HOME/${1#"~/"}" ;; /*) ;; *) set -- "$PWD/$1" ;; esac
+	p=$1
+	while [ "$p" != / ] && [ "${p%/}" != "$p" ]; do p=${p%/}; done
+	echo "$p"
+}
+plural() { if [ "$1" = 1 ]; then echo "$1 $2"; else echo "$1 $2s"; fi; }
 
 # load_mf: parse the manifest into $TMP/mf, one record per line, fields joined by $US:
 #   E sec name source branch desc title      (title defaults to name)
@@ -113,6 +132,71 @@ unlisted() {
 		n=${d%/}; n=${n##*/}
 		case $n in *[!A-Za-z0-9._-]*) continue ;; esac
 		awk -F"$US" -v n="$n" '$1=="E" && $3==n {f=1} END {exit !f}' "$TMP/mf" || echo "$n"
+	done
+}
+
+# ---- shortcuts -------------------------------------------------------------------------
+# The generated .desktop lives in $SRCDIR/.ritz-get/ and is linked into $SHORTDIR as ritz-get-NAME.desktop.
+sc_has() { [ -L "$SHORTDIR/ritz-get-$1.desktop" ] || [ -e "$SHORTDIR/ritz-get-$1.desktop" ]; }
+sc_cap() { is_installed "$1" && [ -f "$SRCDIR/$1/$1.desktop" ]; }
+# sc_col NAME KIND: porcelain column 17, on | off | - (no capability)
+sc_col() { if [ "$2" = website ] || sc_cap "$1"; then if sc_has "$1"; then echo on; else echo off; fi; else echo -; fi; }
+# sc_link GEN LINK: put the generated file into the shortcuts folder.
+# ponytail: a symlink (every install is symlinks); unverified on GNOME/KDE, gets tested in the VMs.
+# If a desktop ignores symlinked .desktop files, this one function switches to: cp -f "$1" "$2"
+sc_link() { mkdir -p "$(dirname "$2")" && ln -sfn "$1" "$2"; }
+sc_db() { ! command -v update-desktop-database >/dev/null 2>&1 || update-desktop-database "$SHORTDIR" >/dev/null 2>&1; return 0; }
+sc_rm() { rm -f "$SHORTDIR/ritz-get-$1.desktop" "$SRCDIR/.ritz-get/ritz-get-$1.desktop"; }
+
+# sc_make NAME: (re)generate NAME's shortcut and link it; rc 1 with WHY on failure (clobbers SRC TITLE DESC KIND)
+sc_make() {
+	sn=$1 sg=$SRCDIR/.ritz-get/ritz-get-$1.desktop WHY=
+	lookup "$sn" || { KIND=program TITLE=$sn SRC= DESC=; }
+	mkdir -p "$SRCDIR/.ritz-get" || { WHY="cannot create $SRCDIR/.ritz-get"; return 1; }
+	if [ "$KIND" = website ]; then
+		case $SRC in
+		*[[:space:]]*|*\"*|*\'*|*\`*|*\$*|*\\*) WHY="the URL has characters a shortcut can not carry"; return 1 ;;
+		esac
+		si=$MYDIR/icons/$sn.png
+		{ echo "[Desktop Entry]"; echo "Type=Application"; echo "Name=$TITLE"
+		  [ -z "$DESC" ] || echo "Comment=$DESC"
+		  printf 'Exec=xdg-open "%s"\n' "$(printf '%s' "$SRC" | sed 's/%/%%/g')"
+		  [ ! -f "$si" ] || echo "Icon=$si"
+		  echo "Categories=Network;X-Ritze03;"; } >"$sg.new" || { WHY="cannot write $sg"; return 1; }
+	else
+		sd=$SRCDIR/$sn/$sn.desktop si=$SRCDIR/$sn/icon.png
+		[ -f "$sd" ] || { WHY="no $sn.desktop in the repo"; return 1; }
+		[ -f "$si" ] || si=
+		# Name= and Icon= are ritz-get's, Exec= points at ~/.local/bin, X-Ritze03 joins Categories=, the rest stays
+		SC_EXE=$HOME/.local/bin/$sn SC_ICON=$si SC_NAME=$TITLE awk '
+		function flush() { if (ing && !cat) print "Categories=X-Ritze03;"; ing = 0 }
+		BEGIN { exe = ENVIRON["SC_EXE"]; icon = ENVIRON["SC_ICON"]; name = ENVIRON["SC_NAME"]; if (exe ~ / /) exe = "\"" exe "\"" }
+		{ sub(/\r$/, "") }
+		/^\[/ { flush(); ing = ($0 == "[Desktop Entry]"); cat = 0; print
+			if (ing) { print "Name=" name; if (icon != "") print "Icon=" icon }; next }
+		!ing { print; next }
+		/^(Name|Icon)=/ { next }
+		/^Exec=/ { v = substr($0, 6); gsub(/\t/, " ", v); sub(/^ +/, "", v)
+			if (substr(v, 1, 1) == "\"") { i = index(substr(v, 2), "\""); rest = substr(v, i + 2) }
+			else { i = index(v, " "); rest = (i ? substr(v, i) : "") }
+			print "Exec=" exe rest; next }
+		/^Categories=/ { c = $0; if (c !~ /;$/) c = c ";"; if (c !~ /=X-Ritze03;|;X-Ritze03;/) c = c "X-Ritze03;"; print c; cat = 1; next }
+		{ print }
+		END { flush() }' "$sd" >"$sg.new" || { WHY="cannot write $sg"; return 1; }
+	fi
+	mv -f "$sg.new" "$sg" && sc_link "$sg" "$SHORTDIR/ritz-get-$sn.desktop" || { WHY="cannot create $SHORTDIR/ritz-get-$sn.desktop"; return 1; }
+}
+
+# sc_refresh NAME: regenerate an existing shortcut (its generated file holds absolute paths)
+sc_refresh() {
+	sc_has "$1" || return 0
+	if sc_make "$1"; then sc_db; else err "$1: shortcut not refreshed ($WHY); needs repair: ritz-get shortcut $1"; fi
+}
+# sc_names: names of the shortcuts in $SHORTDIR
+sc_names() {
+	for sf in "$SHORTDIR"/ritz-get-*.desktop; do
+		{ [ -L "$sf" ] || [ -e "$sf" ]; } || continue
+		sf=${sf##*/ritz-get-}; echo "${sf%.desktop}"
 	done
 }
 
@@ -208,6 +292,7 @@ install_one() {
 	build "$n"; r=$?
 	if [ "$r" -eq 0 ]; then
 		echo "$n: installed $(branch "$n") $(short "$n")"
+		sc_refresh "$n"
 		setup_lines "$n"
 		return 0
 	fi
@@ -228,6 +313,7 @@ remove_one() {
 		run_script "$n" --remove
 		[ "$RC" -eq 0 ] || { echo "$n: FAILED (install.sh --remove exit $RC; clone kept)"; bump 1; return 0; }
 	fi
+	if sc_has "$n"; then sc_rm "$n"; sc_db; fi
 	rm -rf "${d:?}" && echo "$n: removed"
 }
 
@@ -263,9 +349,9 @@ inst_fields() {
 	if [ "$DIRTY" -gt 0 ] || [ "$AHEAD" -gt 0 ]; then ST=modified; fi
 }
 
-row() { printf 'E\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' "$@" >>"$TMP/rows"; }
-irow() { # SEC NAME TITLE KIND SRC STATE DESC: row for an installed clone (after inst_fields)
-	row "$1" "$2" "$3" "$4" "$5" "$6" "$ST" "$HELD" "${BRN:--}" "${VER:--}" "$LAT" "$BEH" "$DIRTY" "$AHEAD" "$7"
+row() { printf 'E\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' "$@" >>"$TMP/rows"; }
+irow() { # SEC NAME TITLE KIND SRC STATE DESC SHORTCUT: row for an installed clone (after inst_fields)
+	row "$1" "$2" "$3" "$4" "$5" "$6" "$ST" "$HELD" "${BRN:--}" "${VER:--}" "$LAT" "$BEH" "$DIRTY" "$AHEAD" "$7" "$8"
 }
 
 cmd_list() {
@@ -290,9 +376,9 @@ cmd_list() {
 	while IFS=$US read -r k sec n s b d t; do
 		[ "$k" = E ] && want "$n" || continue
 		case $s in
-		http://*|https://*) row "$sec" "$n" "$t" website "$s" website - 0 - - - - - - "$d" ;;
+		http://*|https://*) row "$sec" "$n" "$t" website "$s" website - 0 - - - - - - "$d" "$(sc_col "$n" website)" ;;
 		*)	if is_installed "$n"; then
-				inst_fields "$n"; irow "$sec" "$n" "$t" program "$s" installed "$d"
+				inst_fields "$n"; irow "$sec" "$n" "$t" program "$s" installed "$d" "$(sc_col "$n" program)"
 			else
 				st=available lat=-
 				if [ -n "$OFF" ]; then st=offline
@@ -300,14 +386,14 @@ cmd_list() {
 					if grep -q 429 "$TMP/e.$n"; then st=offline; else st=unreachable; fi
 				else lat=$(awk 'NR == 1 { print substr($1, 1, 7) }' "$TMP/r.$n"); fi
 				if [ "$st" = unreachable ] && [ -z "$ALL" ]; then HIDDEN=$((HIDDEN + 1)); continue; fi
-				row "$sec" "$n" "$t" program "$s" "$st" - 0 "${b:--}" - "${lat:--}" - - - "$d"
+				row "$sec" "$n" "$t" program "$s" "$st" - 0 "${b:--}" - "${lat:--}" - - - "$d" -
 			fi ;;
 		esac
 		awk -F"$US" -v n="$n" '$1 == "S" && $2 == n { print "S\t" n "\t" $3 }' "$TMP/mf" >>"$TMP/rows"
 	done <"$TMP/mf"
 	while read -r n; do
 		want "$n" || continue
-		inst_fields "$n"; irow Unlisted "$n" "$n" program - unlisted ""
+		inst_fields "$n"; irow Unlisted "$n" "$n" program - unlisted "" -
 	done <"$TMP/unl"
 	if [ -n "$PORC" ]; then
 		echo "#porcelain 1"
@@ -317,6 +403,7 @@ cmd_list() {
 		return 0
 	fi
 	awk -F'\t' -v detail="${WANT:+1}" '
+	function pl(n, w) { return n " " w (n == 1 ? "" : "s") }
 	$1 == "E" {
 		if ($2 != sec) { if (sec != "") print ""; print $2; sec = $2 }
 		h = 0; st = $8; s = ""
@@ -324,7 +411,7 @@ cmd_list() {
 		else if ($7 == "installed" || $7 == "unlisted") {
 			if (st == "current") s = "up to date"
 			else if (st == "behind") s = "update available: " $13 " behind, latest " $12
-			else if (st == "modified") s = "modified: " $14 " changed files, " $15 " local commits"
+			else if (st == "modified") s = "modified: " pl($14, "changed file") ", " pl($15, "local commit")
 			else if (st == "fetch-failed") s = "fetch failed"
 			s = $10 " " $11 (s != "" ? "  " s : "")
 			if ($9 == 1) s = s "  [held]"
@@ -336,6 +423,7 @@ cmd_list() {
 		printf "  %-22s %-22s %s\n", $3, $4, s
 		if ($16 != "") print "      " $16
 		if (detail) print "      source: " $6
+		if (detail && $17 != "-") print "      shortcut: " $17
 	}
 	$1 == "S" && detail { if (!h++) print "      Additional steps required:"; print "        " $3 }' "$TMP/rows"
 	[ "$HIDDEN" -eq 0 ] || echo "$HIDDEN program(s) hidden (no access)"
@@ -371,6 +459,7 @@ upd_apply() {
 	build "$n"; r=$?
 	if [ "$r" -eq 0 ]; then
 		echo "$n: updated $(git -C "$d" rev-parse --short "$o") -> $(short "$n")"
+		sc_refresh "$n"
 		UP=$((UP + 1)); [ "$n" != ritz-get ] || SELFUP=1
 		return 0
 	fi
@@ -463,7 +552,7 @@ cmd_switch() {
 	fi
 	echo "$n: building $b"
 	build "$n"; r=$?
-	if [ "$r" -eq 0 ]; then echo "$n: now on $b $(short "$n")"; return 0; fi
+	if [ "$r" -eq 0 ]; then echo "$n: now on $b $(short "$n")"; sc_refresh "$n"; return 0; fi
 	git -C "$d" checkout -q "$old"
 	if [ "$r" -eq 2 ]; then echo "$n: SKIPPED (needs a newer ritz-get)"; bump 1
 	else fail "$n" "$WHY" "$BK"; fi
@@ -478,7 +567,7 @@ cmd_reset() {
 	is_installed "$n" || { err "$n is not installed (ritz-get install $n)"; bump 1; return 0; }
 	changes "$n"
 	if [ -z "$YES" ]; then
-		echo "$n: reset deletes $DIRTY changed files, $AHEAD local commits and any hold, then re-clones ${DEFBR:-the default branch}"
+		echo "$n: reset deletes $(plural "$DIRTY" "changed file"), $(plural "$AHEAD" "local commit") and any hold, then re-clones ${DEFBR:-the default branch}"
 		printf 'Continue? [y/N] '
 		read -r a || a=
 		case $a in y|Y|yes) ;; *) echo aborted; return 0 ;; esac
@@ -491,7 +580,7 @@ cmd_reset() {
 	mv "$d" "$old" && mv "$new" "$d" || { mv "$old" "$d" 2>/dev/null; fail "$n" "cannot replace the clone"; return 0; }
 	build "$n"; r=$?
 	if [ "$r" -eq 0 ]; then
-		rm -rf "${old:?}"; echo "$n: reset to $(branch "$n") $(short "$n")"; return 0
+		rm -rf "${old:?}"; echo "$n: reset to $(branch "$n") $(short "$n")"; sc_refresh "$n"; return 0
 	fi
 	rm -rf "${d:?}"; mv "$old" "$d"	# put the old clone back: same path, links still valid
 	if [ "$r" -eq 2 ]; then echo "$n: SKIPPED (needs a newer ritz-get)"; bump 1
@@ -507,6 +596,95 @@ set_hold() {
 }
 cmd_hold() { [ $# -gt 0 ] || usage_err "hold: no program given"; for n; do set_hold "$n" true; done; }
 cmd_unhold() { [ $# -gt 0 ] || usage_err "unhold: no program given"; for n; do set_hold "$n" false; done; }
+
+cmd_open() {
+	[ $# -eq 1 ] || usage_err "usage: ritz-get open NAME"
+	n=$1; valid "$n" || return 0
+	lookup "$n" || { unknown "$n"; return 0; }
+	[ "$KIND" = website ] || { err "$n is a program, not a website"; bump 1; return 0; }
+	command -v xdg-open >/dev/null 2>&1 || { err "xdg-open not found; open this yourself: $SRC"; bump 1; return 0; }
+	echo "$n: opening $SRC"
+	setsid -f xdg-open "$SRC" >/dev/null 2>&1 </dev/null 9>&-
+}
+
+cmd_shortcut() {
+	[ $# -eq 1 ] || usage_err "usage: ritz-get shortcut NAME [--remove]"
+	n=$1; valid "$n" || return 0
+	if [ -n "$REMOVEF" ]; then
+		sc_has "$n" || { echo "$n: no shortcut"; return 0; }
+		sc_rm "$n"; sc_db; echo "$n: shortcut removed"; return 0
+	fi
+	lookup "$n" || { unknown "$n"; return 0; }
+	if [ "$KIND" = program ]; then
+		is_installed "$n" || { err "$n is not installed (ritz-get install $n)"; bump 1; return 0; }
+		[ -f "$SRCDIR/$n/$n.desktop" ] || { err "$n has no shortcut: its repo ships no $n.desktop"; bump 1; return 0; }
+	fi
+	sc_make "$n" || { err "$n: shortcut failed: $WHY"; bump 1; return 0; }
+	sc_db; echo "$n: shortcut created ($SHORTDIR/ritz-get-$n.desktop)"
+}
+
+# shortcuts [PATH]: print, or move every existing shortcut to PATH (create there, delete here)
+cmd_shortcuts() {
+	[ $# -le 1 ] || usage_err "usage: ritz-get shortcuts [PATH]"
+	[ $# -eq 1 ] || { echo "$SHORTDIR"; return 0; }
+	lock
+	new=$(abspath "$1")
+	[ "$new" != "$SHORTDIR" ] || { echo "shortcuts already in $new"; return 0; }
+	names=$(sc_names); old=$SHORTDIR
+	setcfg shortcuts "$new" || die "cannot write $CFGF"
+	SHORTDIR=$new
+	for n in $names; do
+		if sc_make "$n"; then rm -f "$old/ritz-get-$n.desktop"; echo "$n: moved"
+		else err "$n: not moved ($WHY); needs repair: ritz-get shortcut $n"; bump 1; fi
+	done
+	sc_db; SHORTDIR=$old; sc_db; SHORTDIR=$new
+	echo "shortcuts now in $new"
+}
+
+# dir [PATH]: print, or move the whole repo folder to PATH and repair every program
+cmd_dir() {
+	[ $# -le 1 ] || usage_err "usage: ritz-get dir [PATH] [--yes]"
+	[ $# -eq 1 ] || { echo "$SRCDIR"; return 0; }
+	lock
+	new=$(abspath "$1")
+	[ "$new" != "$SRCDIR" ] || { echo "already in $new"; return 0; }
+	if [ -d "$SRCDIR" ]; then
+		case $new/ in "$SRCDIR"/*) err "$new is inside the current folder $SRCDIR"; bump 1; return 0 ;; esac
+		if [ -d "$new" ] && [ -n "$(ls -A "$new" 2>/dev/null)" ]; then
+			err "$new exists and is not empty; pick an empty or new folder"; bump 1; return 0
+		fi
+		if [ -e "$new" ] && [ ! -d "$new" ]; then err "$new exists and is not a folder"; bump 1; return 0; fi
+		par=$new
+		while [ ! -e "$par" ]; do par=$(dirname "$par"); done
+		if [ "$(stat -c %d "$par")" != "$(stat -c %d "$SRCDIR")" ]; then
+			err "$new is on another filesystem; move it by hand, then run: ritz-get dir $new"; bump 1; return 0
+		fi
+		if [ -z "$YES" ]; then
+			echo "Move $SRCDIR (every program clone in it) to $new?"
+			printf 'Continue? [y/N] '
+			read -r a || a=
+			case $a in y|Y|yes) ;; *) echo aborted; return 0 ;; esac
+		fi
+		if [ -d "$new" ]; then rmdir "$new" || { err "cannot use $new"; bump 1; return 0; }; fi
+		mkdir -p "$(dirname "$new")" && mv "$SRCDIR" "$new" || { err "cannot move $SRCDIR to $new"; bump 1; return 0; }
+		echo "moved $SRCDIR -> $new"
+	fi
+	setcfg dir "$new" || die "cannot write $CFGF"
+	SRCDIR=$new SUDO=
+	echo "folder is now $new"
+	names=$(for d in "$SRCDIR"/*/; do
+		[ -e "${d}.git" ] || continue
+		n=${d%/}; n=${n##*/}
+		case $n in *[!A-Za-z0-9._-]*) continue ;; esac
+		echo "$n"
+	done)
+	for n in $names; do	# re-run install.sh: it re-points ~/.local/bin and friends at the new path
+		echo "$n: re-linking"
+		build "$n"; r=$?
+		if [ "$r" -ne 0 ]; then echo "$n: needs repair: ritz-get install $n"; if [ "$r" -eq 1 ]; then bump "$BK"; else bump 1; fi; fi
+	done
+	for n in $(sc_names); do sc_refresh "$n"; done
+}
 
 # ---- main ------------------------------------------------------------------------------
 # lock: one changing ritz-get at a time (fd 9, released when the process dies)
@@ -529,6 +707,7 @@ main() {
 		--offline) OFFLINE=1 ;;
 		--all) ALL=1 ;;
 		--porcelain) PORC=1 ;;
+		--remove) REMOVEF=1 ;;
 		--branch|-b) [ $# -gt 0 ] || usage_err "$a needs a branch"; BR=$1; shift; n=$((n - 1)) ;;
 		-h|--help) cmd=help ;;
 		-*) usage_err "unknown option: $a" ;;
@@ -537,14 +716,15 @@ main() {
 	done
 	case $cmd in
 	help|-h|--help) usage; exit 0 ;;
-	list|install|update|remove|branches|switch|reset|hold|unhold) ;;
+	list|install|update|remove|branches|switch|reset|hold|unhold|open|shortcut|shortcuts|dir) ;;
 	uninstall) cmd=remove ;;
 	*) usage >&2; exit 2 ;;
 	esac
 
 	SRCDIR=$(cfg dir)
-	SRCDIR=${SRCDIR:-${XDG_DATA_HOME:-$HOME/.local/share}/ritz-get/src}
-	case $SRCDIR in "~/"*) SRCDIR=$HOME/${SRCDIR#"~/"} ;; esac
+	SRCDIR=$(abspath "${SRCDIR:-${XDG_DATA_HOME:-$HOME/.local/share}/ritz-get/src}")
+	SHORTDIR=$(cfg shortcuts)
+	SHORTDIR=$(abspath "${SHORTDIR:-${XDG_DATA_HOME:-$HOME/.local/share}/applications}")
 	if [ -z "${XDG_RUNTIME_DIR:-}" ] && [ -d "/run/user/$(id -u)" ]; then
 		XDG_RUNTIME_DIR=/run/user/$(id -u); export XDG_RUNTIME_DIR	# systemctl --user from cron
 	fi
@@ -553,7 +733,7 @@ main() {
 	trap 'exit 1' INT TERM HUP
 	load_mf
 	case $cmd in
-	install|update|remove|switch|reset|hold|unhold)
+	install|update|remove|switch|reset|hold|unhold|shortcut)
 		[ -n "${RITZ_GET_SELF_UPDATED:-}" ] || lock ;;	# after a self-update exec the fd is inherited
 	esac
 	# RITZ_GET_SUDO for install.sh: passed through if set (the GUI sets pkexec), else sudo on a terminal

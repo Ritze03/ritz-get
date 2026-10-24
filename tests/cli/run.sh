@@ -4,7 +4,7 @@
 # Prints "PASS name" / "FAIL name: why", then "ALL PASS" or "N FAILED"; exit status follows.
 ROOT=$(cd "$(dirname "$0")/../.." && pwd -P)
 RG=$ROOT/ritz-get
-for c in git flock timeout awk; do command -v "$c" >/dev/null 2>&1 || { echo "FAIL setup: $c not installed"; exit 1; }; done
+for c in git flock timeout awk setsid; do command -v "$c" >/dev/null 2>&1 || { echo "FAIL setup: $c not installed"; exit 1; }; done
 T=$(mktemp -d "${TMPDIR:-/tmp}/ritz-get-test.XXXXXX") || exit 1
 HOLD=
 trap '[ -z "$HOLD" ] || kill "$HOLD" 2>/dev/null; rm -rf "$T"' EXIT
@@ -98,6 +98,41 @@ cp "$ROOT/ritz-get" "$ROOT/install.sh" "$T/work/ritz-get/"
 (cd "$T/work/beta" && git checkout -q -b dev && echo d >devfile && git add -A && git commit -q -m dev &&
 	git push -q origin dev && git checkout -q main)
 
+# fixtures for shortcuts: repos that ship NAME.desktop (and icon.png)
+mkrepo shorty; mkrepo shorty2
+cat >"$T/work/shorty/shorty.desktop" <<'EOF'
+[Desktop Entry]
+Type=Application
+Name=Shorty Raw
+Exec=shorty --flag %U
+Icon=shorty-own-icon
+Categories=Utility;
+
+[Desktop Action act]
+Name=Act
+Exec=shorty --act
+EOF
+printf '\211PNG\r\n\032\n' >"$T/work/shorty/icon.png"
+cat >"$T/work/shorty2/shorty2.desktop" <<'EOF'
+[Desktop Entry]
+Type=Application
+Name=Raw Two
+Exec="/opt/two words/run" -x %f
+Icon=foo
+EOF
+for r in shorty shorty2; do (cd "$T/work/$r" && git add -A && git commit -q -m desktop && git push -q origin main); done
+# the GUI repo and an installer remote (Ritze03/ritz-get.git next to the t/ repos)
+mkrepo ritz-get-gui
+printf '[Desktop Entry]\nType=Application\nName=GUI\nExec=ritz-get-gui\n' >"$T/work/ritz-get-gui/ritz-get-gui.desktop"
+(cd "$T/work/ritz-get-gui" && git add -A && git commit -q -m desktop && git push -q origin main)
+mkdir -p "$T/remote/Ritze03" "$T/work/rgi"
+cp "$ROOT/ritz-get" "$ROOT/install.sh" "$ROOT/programs" "$T/work/rgi/"
+printf 'ritz-get-gui t/ritz-get-gui "The GUI"\n' >>"$T/work/rgi/programs"
+(cd "$T/work/rgi" && git init -q -b main && git add -A && git commit -q -m v0 && git clone -q --bare . "$T/remote/Ritze03/ritz-get.git")
+# xdg-open stub
+mkdir -p "$T/bin"
+printf '#!/bin/sh\necho "$@" >>"%s"\n' "$T/xdg.log" >"$T/bin/xdg-open"; chmod +x "$T/bin/xdg-open"
+
 cat >"$T/programs" <<'EOF'
 # test manifest
 alpha t/alpha "Alpha program"
@@ -116,10 +151,14 @@ eps t/eps "Fails"
 zeta t/zeta "Slow"
 eta t/eta "Spec 2"
 ghost t/ghost "Does not exist"
+shorty t/shorty "Has a shortcut"
+  title: Shorty Title
+shorty2 t/shorty2 "Shortcut without categories"
 
 [Websites]
 site https://example.com/page#frag "A site"
   title: Cool Site
+badurl https://x.example/a'b "Quote in the URL"
 EOF
 printf 'ID=cachyos\nID_LIKE=arch\n' >"$T/os-arch"; printf 'ID=fedora\n' >"$T/os-fedora"
 printf 'ID=ubuntu\nID_LIKE="debian"\n' >"$T/os-ubuntu"; printf 'ID=plan9\n' >"$T/os-other"
@@ -134,12 +173,12 @@ rg list --nonsense; rc "unknown option" 2
 rg list --offline --porcelain; rc "list --offline --porcelain" 0
 eq "porcelain header" "#porcelain 1" "$(sed -n 1p "$T/out")"
 eq "porcelain online flag" "#online 0" "$(sed -n 2p "$T/out")"
-row_is "row: alpha (title, desc, default section)" alpha 'E\tSoftware\talpha\tAlpha Tool\tprogram\tt/alpha\toffline\t-\t0\t-\t-\t-\t-\t-\t-\tAlpha program'
-row_is "row: beta (section Helpers, title = name)" beta 'E\tHelpers\tbeta\tbeta\tprogram\tt/beta\toffline\t-\t0\t-\t-\t-\t-\t-\t-\tBeta helper'
-row_is "row: website (URL with #)" site 'E\tWebsites\tsite\tCool Site\twebsite\thttps://example.com/page#frag\twebsite\t-\t0\t-\t-\t-\t-\t-\t-\tA site'
+row_is "row: alpha (title, desc, default section)" alpha 'E\tSoftware\talpha\tAlpha Tool\tprogram\tt/alpha\toffline\t-\t0\t-\t-\t-\t-\t-\t-\tAlpha program\t-'
+row_is "row: beta (section Helpers, title = name)" beta 'E\tHelpers\tbeta\tbeta\tprogram\tt/beta\toffline\t-\t0\t-\t-\t-\t-\t-\t-\tBeta helper\t-'
+row_is "row: website (URL with #)" site 'E\tWebsites\tsite\tCool Site\twebsite\thttps://example.com/page#frag\twebsite\t-\t0\t-\t-\t-\t-\t-\t-\tA site\toff'
 eq "setup lines follow their entry" "$(printf 'S\talpha\tOpen the app and press go\nS\talpha\tDocs: https://example.com/x#y')" "$(grep '^S' "$T/out")"
 eq "offline: nothing hidden" 0 "$(grep -c '^#hidden' "$T/out")"
-eq "no tab inside fields" 0 "$(awk -F'\t' '$1 == "E" && NF != 16' "$T/out" | wc -l | tr -d ' ')"
+eq "no tab inside fields" 0 "$(awk -F'\t' '$1 == "E" && NF != 17' "$T/out" | wc -l | tr -d ' ')"
 
 rg list --porcelain; rc "list --porcelain (online)" 0
 eq "online flag" "#online 1" "$(sed -n 2p "$T/out")"
@@ -290,7 +329,7 @@ eq "dirty = modified (wins over behind)" "modified 1 0" "$(fld alpha 8) $(fld al
 rg update --yes; rc "update skips a dirty clone" 0
 has "modified skip line" "alpha: SKIPPED (local changes; ritz-get reset alpha to discard them)"
 rg update alpha --yes; has "also for update NAME" "alpha: SKIPPED (local changes"
-rgi n reset alpha; rc "reset declined" 0; has "reset asks what is lost" "1 changed files, 0 local commits"; has "aborted" "aborted"
+rgi n reset alpha; rc "reset declined" 0; has "reset asks what is lost" "1 changed file, 0 local commits"; has "aborted" "aborted"
 exists "declined reset keeps the edit" "$SRC/alpha/alpha"; eq "edit still there" 1 "$(git -C "$SRC/alpha" status --porcelain | wc -l | tr -d ' ')"
 rg hold alpha >/dev/null
 rg reset alpha --yes; rc "reset --yes" 0; has "reset message" "alpha: reset to main"
@@ -300,7 +339,7 @@ eq "reset clears the hold" 0 "$(git -C "$SRC/alpha" config --get-all ritz-get.ho
 git -C "$SRC/alpha" commit -q --allow-empty -m local
 rg list --porcelain; eq "ahead = modified" "modified 0 1" "$(fld alpha 8) $(fld alpha 14) $(fld alpha 15)"
 newcommit alpha; rg update --yes; has "ahead skips update" "alpha: SKIPPED (local changes"
-rgi y reset alpha; rc "reset after confirmation" 0; has "prompt names local commits" "0 changed files, 1 local commits"
+rgi y reset alpha; rc "reset after confirmation" 0; has "prompt names local commits" "0 changed files, 1 local commit"
 eq "reset dropped the local commit" "0" "$(git -C "$SRC/alpha" rev-list --count '@{u}..HEAD')"
 touch "$SRC/alpha/marker"; newcommit alpha fail
 rg reset alpha --yes; rc "reset with failing build" 1
@@ -356,6 +395,193 @@ rc "cron (no tty, no GUI): busy update exits 0" 0
 eq "cron: silent" "" "$(cat "$T/all")"
 kill "$HOLD"; wait "$HOLD" 2>/dev/null; HOLD=
 rg update --yes; rc "lock released with the process" 0
+
+# ---- shortcuts -------------------------------------------------------------------------
+APPS=$XDG_DATA_HOME/applications
+kv() { sed -n "s/^$2=//p" "$1" | head -n 1; }	# first KEY= value of a .desktop file
+rg shortcuts; eq "shortcuts: default folder" "$APPS" "$(cat "$T/out")"
+rg install alpha shorty shorty2; rc "install shortcut fixtures" 0
+gone "install does not create a shortcut" "$APPS/ritz-get-shorty.desktop"
+rg shortcut alpha; rc "shortcut: repo ships no NAME.desktop" 1; has "no .desktop message" "ships no alpha.desktop"
+rg shortcut gamma; rc "shortcut: not installed" 1; has "not installed message" "gamma is not installed"
+rg shortcut nope; rc "shortcut: unknown" 1
+rg shortcut; rc "shortcut without name" 2
+rg shortcut shorty; rc "shortcut shorty" 0
+SD=$APPS/ritz-get-shorty.desktop
+eq "shortcut is a symlink to the generated file" "$SRC/.ritz-get/ritz-get-shorty.desktop" "$(readlink "$SD")"
+exists "generated file lives in the repo folder" "$SRC/.ritz-get/ritz-get-shorty.desktop"
+eq "Exec: first word is ~/.local/bin/NAME, args kept" "$HOME/.local/bin/shorty --flag %U" "$(kv "$SD" Exec)"
+eq "Icon: the clone's icon.png (own Icon= ignored)" "$SRC/shorty/icon.png" "$(kv "$SD" Icon)"
+eq "only one Icon=" 1 "$(grep -c '^Icon=' "$SD")"
+eq "Name: manifest title" "Shorty Title" "$(kv "$SD" Name)"
+eq "Categories gets X-Ritze03" "Utility;X-Ritze03;" "$(kv "$SD" Categories)"
+eq "other keys and sections stay" "1 1" "$(grep -c '^Type=Application' "$SD") $(grep -c '^Exec=shorty --act' "$SD")"
+rg shortcut shorty2; rc "shortcut shorty2" 0
+SD2=$APPS/ritz-get-shorty2.desktop
+eq "quoted Exec: first word replaced" "$HOME/.local/bin/shorty2 -x %f" "$(kv "$SD2" Exec)"
+eq "no icon.png: no Icon=" 0 "$(grep -c '^Icon=' "$SD2")"
+eq "missing Categories= is created" "X-Ritze03;" "$(kv "$SD2" Categories)"
+eq "Name falls back to NAME" shorty2 "$(kv "$SD2" Name)"
+rg shortcut site; rc "website shortcut" 0
+SW=$APPS/ritz-get-site.desktop
+eq "website: Exec xdg-open URL (quoted)" 'xdg-open "https://example.com/page#frag"' "$(kv "$SW" Exec)"
+eq "website: Name = title" "Cool Site" "$(kv "$SW" Name)"
+eq "website: Comment = description" "A site" "$(kv "$SW" Comment)"
+eq "website: Categories" "Network;X-Ritze03;" "$(kv "$SW" Categories)"
+eq "website: Type" Application "$(kv "$SW" Type)"
+eq "website without icons/NAME.png: no Icon=" 0 "$(grep -c '^Icon=' "$SW")"
+rg shortcut badurl; rc "website URL a shortcut can not carry" 1; has "bad URL message" "can not carry"
+mkdir -p "$T/rgcopy/icons"; cp "$RG" "$T/rgcopy/ritz-get"; : >"$T/rgcopy/icons/site.png"
+sh "$T/rgcopy/ritz-get" shortcut site >/dev/null 2>&1 </dev/null
+eq "website icon: icons/NAME.png next to the script" "$(cd "$T/rgcopy" && pwd -P)/icons/site.png" "$(kv "$SW" Icon)"
+rg shortcut site >/dev/null
+
+rg list --porcelain --offline
+eq "column 17: program with shortcut" on "$(fld shorty 17)"
+eq "column 17: website with shortcut" on "$(fld site 17)"
+eq "column 17: no NAME.desktop" - "$(fld alpha 17)"
+eq "column 17: not installed" - "$(fld gamma 17)"
+eq "column 17 on every row (17 fields)" 0 "$(awk -F'\t' '$1 == "E" && NF != 17' "$T/out" | wc -l | tr -d ' ')"
+rg shortcut shorty --remove; rc "shortcut --remove" 0; has "removed message" "shorty: shortcut removed"
+gone "shortcut link removed" "$SD"; gone "generated file removed" "$SRC/.ritz-get/ritz-get-shorty.desktop"
+rg list --porcelain --offline alpha shorty
+eq "column 17: capable, off" off "$(fld shorty 17)"
+rg list shorty; has "human list NAME shows the shortcut state" "shortcut: off"
+rg shortcut shorty --remove; rc "removing again is fine" 0; has "no shortcut message" "shorty: no shortcut"
+git clone -q "file://$T/remote/t/alpha.git" "$SRC/orphan"; rg list --porcelain --offline orphan
+eq "column 17: unlisted" - "$(fld orphan 17)"; rm -rf "$SRC/orphan"
+
+rg shortcut shorty >/dev/null; rg remove shorty; rc "remove with a shortcut" 0
+gone "remove: shortcut link gone" "$SD"; gone "remove: generated file gone" "$SRC/.ritz-get/ritz-get-shorty.desktop"
+rg install shorty >/dev/null; rg shortcut shorty >/dev/null
+printf junk >"$SRC/.ritz-get/ritz-get-shorty2.desktop"
+rg install shorty2; rc "repair" 0; eq "repair regenerates the shortcut" "$HOME/.local/bin/shorty2 -x %f" "$(kv "$SD2" Exec)"
+printf junk >"$SRC/.ritz-get/ritz-get-shorty2.desktop"; newcommit shorty2
+rg update --yes; has "update shorty2" "shorty2: updated"
+eq "update regenerates the shortcut" "$HOME/.local/bin/shorty2 -x %f" "$(kv "$SD2" Exec)"
+printf junk >"$SRC/.ritz-get/ritz-get-shorty2.desktop"
+rg reset shorty2 --yes; rc "reset" 0; eq "reset regenerates the shortcut" "$HOME/.local/bin/shorty2 -x %f" "$(kv "$SD2" Exec)"
+
+mkdir -p "$XDG_CONFIG_HOME/ritz-get"; printf 'foo=bar\n' >"$XDG_CONFIG_HOME/ritz-get/config"
+rg shortcuts "$T/menu"; rc "shortcuts PATH" 0
+rg shortcuts; eq "shortcuts: new folder printed" "$T/menu" "$(cat "$T/out")"
+eq "shortcuts: config keeps other keys" "foo=bar shortcuts=$T/menu" "$(grep -E '^(foo|shortcuts)=' "$XDG_CONFIG_HOME/ritz-get/config" | tr '\n' ' ' | sed 's/ $//')"
+exists "shortcuts: program moved" "$T/menu/ritz-get-shorty2.desktop"; exists "shortcuts: website moved" "$T/menu/ritz-get-site.desktop"
+gone "shortcuts: old folder emptied (program)" "$APPS/ritz-get-shorty2.desktop"; gone "shortcuts: old folder emptied (website)" "$APPS/ritz-get-site.desktop"
+eq "shortcuts: link in the new folder" "$SRC/.ritz-get/ritz-get-shorty2.desktop" "$(readlink "$T/menu/ritz-get-shorty2.desktop")"
+rg list --porcelain --offline site; eq "shortcuts: state follows the folder" on "$(fld site 17)"
+rg shortcuts "$T/menu"; rc "shortcuts PATH (same)" 0; has "already message" "already in"
+rg shortcuts "$APPS"; rc "shortcuts back to default" 0; exists "moved back" "$SD2"
+
+# ---- open ------------------------------------------------------------------------------
+rge PATH="$T/bin:$PATH" open site; rc "open website" 0
+i=0; while [ ! -s "$T/xdg.log" ] && [ "$i" -lt 50 ]; do sleep 0.1; i=$((i + 1)); done
+eq "open: xdg-open gets the URL" "https://example.com/page#frag" "$(cat "$T/xdg.log" 2>/dev/null)"
+rg open alpha; rc "open a program" 1; has "program, not a website" "alpha is a program, not a website"
+rg open nope; rc "open unknown" 1
+rg open; rc "open without name" 2
+
+# ---- dir -------------------------------------------------------------------------------
+rg dir; eq "dir prints the folder" "$SRC" "$(cat "$T/out")"
+rg shortcut shorty >/dev/null
+rg dir "$T/moved"; rc "dir without confirmation" 0; has "dir aborted" "aborted"
+exists "aborted dir: nothing moved" "$SRC/alpha/.git"; gone "aborted dir: no target" "$T/moved"
+eq "aborted dir: no config written" 0 "$(grep -c '^dir=' "$XDG_CONFIG_HOME/ritz-get/config")"
+rgi n dir "$T/moved"; has "dir: answering n" "aborted"; exists "dir: n moved nothing" "$SRC/alpha/.git"
+mkdir -p "$T/full"; touch "$T/full/x"
+rg dir "$T/full" --yes; rc "dir into a non-empty folder" 1; has "non-empty message" "not empty"
+exists "non-empty target: nothing moved" "$SRC/alpha/.git"
+rg dir "$SRC/sub" --yes; rc "dir inside itself" 1; has "inside message" "inside the current folder"
+if [ "$(stat -c %d /dev/shm 2>/dev/null)" != "$(stat -c %d "$T")" ] && [ -d /dev/shm ]; then
+	rg dir "/dev/shm/ritz-get-test-$$/x" --yes; rc "dir across filesystems" 1
+	has "cross-fs hint" "move it by hand, then run: ritz-get dir"; exists "cross-fs: nothing moved" "$SRC/alpha/.git"
+	gone "cross-fs: nothing created" "/dev/shm/ritz-get-test-$$"
+fi
+rg dir "$T/moved" --yes; rc "dir move" 0
+exists "dir: clones moved" "$T/moved/alpha/.git"; gone "dir: old folder gone" "$SRC"
+rg dir; eq "dir prints the new folder" "$T/moved" "$(cat "$T/out")"
+eq "dir: config written, other keys kept" "foo=bar dir=$T/moved" "$(grep -E '^(dir|foo)=' "$XDG_CONFIG_HOME/ritz-get/config" | tr '\n' ' ' | sed 's/ $//')"
+MV=$(cd "$T/moved" && pwd -P)
+eq "dir: ~/.local/bin link re-pointed" "$MV/alpha/alpha" "$(readlink "$HOME/.local/bin/alpha")"
+eq "dir: ritz-get's own link re-pointed" "$MV/ritz-get/ritz-get" "$(readlink "$HOME/.local/bin/ritz-get")"
+eq "dir: shortcut link re-pointed" "$T/moved/.ritz-get/ritz-get-shorty.desktop" "$(readlink "$SD")"
+exists "dir: shortcut not dangling" "$SD"
+eq "dir: shortcut regenerated (Icon)" "$T/moved/shorty/icon.png" "$(kv "$SD" Icon)"
+eq "dir: website shortcut re-pointed" "$T/moved/.ritz-get/ritz-get-site.desktop" "$(readlink "$SW")"; exists "dir: website shortcut not dangling" "$SW"
+rg list --porcelain --offline; eq "dir: still installed" installed "$(fld alpha 7)"
+mv "$T/moved" "$T/hand"
+rg dir "$T/hand"; rc "dir after moving by hand" 0
+rg dir; eq "hand-moved: config updated" "$T/hand" "$(cat "$T/out")"
+eq "hand-moved: links repaired" "$(cd "$T/hand" && pwd -P)/alpha/alpha" "$(readlink "$HOME/.local/bin/alpha")"
+eq "hand-moved: shortcuts repaired" "$T/hand/.ritz-get/ritz-get-shorty.desktop" "$(readlink "$SD")"
+mkdir -p "$T/empty"; echo fail >"$T/hand/alpha/mode"
+rg dir "$T/empty" --yes; rc "dir with a failing repair" 1
+has "needs repair line" "alpha: needs repair: ritz-get install alpha"
+rg dir; eq "failed repair: the move stays" "$T/empty" "$(cat "$T/out")"
+exists "dir into an existing empty folder" "$T/empty/shorty/.git"; gone "failed repair: old folder gone" "$T/hand"
+eq "other programs still repaired" "$(cd "$T/empty" && pwd -P)/shorty/shorty" "$(readlink "$HOME/.local/bin/shorty")"
+git -C "$T/empty/alpha" checkout -q mode
+rg install alpha; rc "repair after a failed dir repair" 0
+eq "repair re-points the link" "$(cd "$T/empty" && pwd -P)/alpha/alpha" "$(readlink "$HOME/.local/bin/alpha")"
+rg dir "$SRC" --yes; rc "dir back to the default" 0; exists "default folder again" "$SRC/alpha/.git"
+rg remove alpha shorty shorty2 >/dev/null; rg shortcut site --remove >/dev/null
+gone "cleanup: shortcuts gone" "$SD2"; rm -f "$XDG_CONFIG_HOME/ritz-get/config"
+
+# ---- the real programs file ------------------------------------------------------------
+rge RITZ_GET_MANIFEST="$ROOT/programs" list --offline --porcelain; rc "real programs file parses" 0
+names() { awk -F'\t' '$1 == "E" { print $3 }' "$T/out" | tr '\n' ' ' | sed 's/ $//'; }
+eq "real programs: sections in order" "Helpers Websites Other" "$(awk -F'\t' '$1 == "E" { print $2 }' "$T/out" | uniq | tr '\n' ' ' | sed 's/ $//')"
+eq "real programs: entries" "ritz-get ccorral ts6tray cs2-alias-cycling cs2-chat-keybind cs2-multimap simple-screensharing-web walters-knaggertreff ts6-themes" "$(names)"
+eq "real programs: ts6tray setup lines" 2 "$(awk -F'\t' '$1 == "S" && $2 == "ts6tray"' "$T/out" | wc -l | tr -d ' ')"
+eq "real programs: descriptions 1-80 chars without quote, titles <= 40" 0 "$(awk -F'\t' '$1 == "E" && (length($16) < 1 || length($16) > 80 || $16 ~ /"/ || length($4) > 40 || length($4) < 1)' "$T/out" | wc -l | tr -d ' ')"
+eq "real programs: websites have URLs" 6 "$(awk -F'\t' '$1 == "E" && $5 == "website" && $6 ~ /^https:\/\//' "$T/out" | wc -l | tr -d ' ')"
+sed -e 's/^#\([A-Za-z]\)/\1/' -e 's/^#  title:/  title:/' "$ROOT/programs" >"$T/programs.all"
+rge RITZ_GET_MANIFEST="$T/programs.all" list --offline --porcelain; rc "programs with Software enabled" 0
+eq "Software order" "Software Helpers Websites Other" "$(awk -F'\t' '$1 == "E" { print $2 }' "$T/out" | uniq | tr '\n' ' ' | sed 's/ $//')"
+eq "Software entries" "yt-dlp-gui ritz ForzaTelemetryV3Launcher simple-screensharing geofinder gamescope-ritz SteamAlt" "$(awk -F'\t' '$1 == "E" && $2 == "Software" { print $3 }' "$T/out" | tr '\n' ' ' | sed 's/ $//')"
+eq "SteamAlt title" "Steam Userdata Mover" "$(fld SteamAlt 4)"
+eq "Software entries: valid description and title" 0 "$(awk -F'\t' '$1 == "E" && (length($16) < 1 || length($16) > 80 || $16 ~ /"/ || length($4) > 40)' "$T/out" | wc -l | tr -d ' ')"
+
+# ---- the one-time installer ------------------------------------------------------------
+# inst HOME [ENV=val...]: no controlling terminal (setsid), stdin /dev/null, XDG_* unset, manifest from the clone
+inst() {
+	h=$1; shift; mkdir -p "$h"
+	setsid -w env -u XDG_DATA_HOME -u XDG_CONFIG_HOME -u XDG_CACHE_HOME -u RITZ_GET_MANIFEST -u RITZ_GET_DIR HOME="$h" "$@" \
+		sh "$ROOT/install-ritz-get.sh" >"$T/out" 2>"$T/err" </dev/null; done_run
+}
+inst "$T/ih1" RITZ_GET_DIR="$T/ih1/clones"; rc "installer (no tty, RITZ_GET_DIR)" 0
+exists "installer: clone in RITZ_GET_DIR" "$T/ih1/clones/ritz-get/.git"
+eq "installer: config written for a non-default folder" "dir=$T/ih1/clones" "$(cat "$T/ih1/.config/ritz-get/config")"
+eq "installer: ran install.sh" "$T/ih1/clones/ritz-get/ritz-get" "$(readlink "$T/ih1/.local/bin/ritz-get")"
+has "installer: PATH hint" 'export PATH="$HOME/.local/bin:$PATH"'
+gone "installer: no tty, no ~/.profile edit" "$T/ih1/.profile"
+gone "installer: no tty, no GUI" "$T/ih1/clones/ritz-get-gui"
+eq "installer: the installed ritz-get uses the folder" "$T/ih1/clones" "$(env -u XDG_DATA_HOME -u XDG_CONFIG_HOME -u RITZ_GET_MANIFEST HOME="$T/ih1" sh "$T/ih1/.local/bin/ritz-get" dir)"
+inst "$T/ih1" RITZ_GET_DIR="$T/ih1/clones"; rc "installer, second run" 0; has "already installed" "already installed"; has "points to update" "ritz-get update"
+mkdir -p "$T/ih2"
+setsid -w env -u XDG_DATA_HOME -u XDG_CONFIG_HOME -u XDG_CACHE_HOME -u RITZ_GET_MANIFEST -u RITZ_GET_DIR HOME="$T/ih2" \
+	sh -c 'cat "$0" | sh' "$ROOT/install-ritz-get.sh" >"$T/out" 2>"$T/err" </dev/null; done_run
+rc "installer piped into sh (stdin is the script)" 0
+exists "piped: default folder" "$T/ih2/.local/share/ritz-get/src/ritz-get/.git"; gone "piped: no config for the default folder" "$T/ih2/.config/ritz-get/config"
+# a terminal: answers come from RITZ_GET_TTY (the hook for /dev/tty)
+printf '%s\ny\ny\n' "$T/ih3/f" >"$T/ans3"
+inst "$T/ih3" RITZ_GET_TTY="$T/ans3"; rc "installer with answers (folder, PATH yes, GUI yes)" 0
+eq "answers: folder" "dir=$T/ih3/f" "$(cat "$T/ih3/.config/ritz-get/config")"
+has "answers: PATH edit" "Added."; has "answers: profile has the line" ".local/bin"
+eq "answers: ~/.profile" 'export PATH="$HOME/.local/bin:$PATH"' "$(grep '^export PATH' "$T/ih3/.profile")"
+exists "answers: GUI installed" "$T/ih3/f/ritz-get-gui/.git"
+exists "answers: GUI shortcut" "$T/ih3/.local/share/applications/ritz-get-ritz-get-gui.desktop"
+has "answers: app menu hint" "Open ritz-get-gui from your app menu"
+newcommit ritz-get-gui missing
+printf '\nn\n\n' >"$T/ans4"
+inst "$T/ih4" RITZ_GET_TTY="$T/ans4" RITZ_GET_OS_RELEASE="$T/os-arch"; rc "installer: GUI needs tools is not a failure" 0
+has "GUI deps header" "ritz-get is installed; the GUI needs these first:"
+has "GUI deps line" "deps: sudo pacman -S --needed gcc p1 p2"
+exists "defaults: blank folder answer" "$T/ih4/.local/share/ritz-get/src/ritz-get/.git"; gone "no PATH edit after n" "$T/ih4/.profile"
+lacks "no app menu hint" "Open ritz-get-gui from your app menu"
+mkdir -p "$T/nogit"; ln -sf "$(command -v id)" "$T/nogit/id"
+setsid -w env PATH="$T/nogit" HOME="$T/ih5" "$(command -v sh)" "$ROOT/install-ritz-get.sh" >"$T/out" 2>"$T/err" </dev/null; done_run
+rc "installer without git" 3; has "missing git line" "missing: git (try: pacman:git dnf:git apt:git)"
 
 # ---- config: dir= ----------------------------------------------------------------------
 mkdir -p "$XDG_CONFIG_HOME/ritz-get"
