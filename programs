@@ -1,16 +1,60 @@
-# NAME REPO [BRANCH]
-#   REPO   owner/name on GitHub; the repo must have an executable ./install.sh
-#   BRANCH branch to clone, default: the remote's default branch
-ritz-get  Ritze03/ritz-get
-ccorral   Ritze03/ccorral
-ts6tray   Ritze03/ts6tray
+# The list of things ritz-get knows about. Friends get changes with their next `ritz-get update`.
+#
+# A line starting with [Name] opens a section; the sections are shown in this order.
+# Entries before the first section belong to [Software]. '#' starts a comment only as the
+# first character of a line (so URLs may contain '#').
+#
+# A program (a git repo with an executable ./install.sh, see SPEC.md):
+#   NAME OWNER/REPO [BRANCH] "DESCRIPTION"
+# A website (opened with xdg-open, can get a start-menu shortcut):
+#   NAME URL "DESCRIPTION"
+#
+#   NAME         [A-Za-z0-9][A-Za-z0-9._-]*; folder name, command name, icons/NAME.png
+#   BRANCH       optional; default is the remote's default branch
+#   DESCRIPTION  at most 80 characters, no double quote
+#
+# Optional indented lines directly under an entry:
+#   title: Display Name          at most 40 characters, shown instead of NAME
+#   setup: one manual step       at most 120 characters, shown after install; a URL becomes a link
+#
+# Private repos stay out: other people can not clone them.
 
-#yt-dlp-gui            Ritze03/yt-dlp-gui            (cgo, needs Gio dev libs)
-#cc-voice-detection    Ritze03/cc-voice-detection    (private repo, friends can't clone it)
-#ritz                  Ritze03/ritz
-#ForzaTelemetryV3      Ritze03/ForzaTelemetryV3
-#ForzaTelemetryV3Launcher Ritze03/ForzaTelemetryV3Launcher (Rust GUI; builds ForzaTelemetryV3 itself)
-#simple-screensharing  Ritze03/simple-screensharing
-#geofinder             Ritze03/geofinder
-#gamescope-ritz        Ritze03/gamescope-ritz        (builds from source, needs sudo)
-# yt-dlp: third-party, later
+[Software]
+# Commented out until each program is ported to the spec.
+#yt-dlp-gui Ritze03/yt-dlp-gui "Lean Go + Gio desktop GUI for yt-dlp"
+#  title: yt-dlp GUI
+#ritz Ritze03/ritz "Linux Steam launch wrapper"
+#ForzaTelemetryV3Launcher Ritze03/ForzaTelemetryV3Launcher "Keeps ForzaTelemetryV3 up to date, builds and runs it"
+#  title: Forza Telemetry V3
+#simple-screensharing Ritze03/simple-screensharing "Friends screensharing: native client, QUIC relay"
+#  title: Simple Screensharing
+#geofinder Ritze03/geofinder "Geobingo-style multiplayer party game with real Google and Apple Maps"
+#  title: Geofinder
+#gamescope-ritz Ritze03/gamescope-ritz "SteamOS session compositing window manager, with added features"
+#  title: Gamescope Ritz
+#SteamAlt Ritze03/SteamAlt "Steam Userdata Mover"
+#  title: Steam Userdata Mover
+
+[Helpers]
+ritz-get Ritze03/ritz-get "Install, update and remove Ritze03's programs, built from source"
+ccorral Ritze03/ccorral "Keeps Claude Code sessions on a few CPU cores so the desktop stays fast"
+ts6tray Ritze03/ts6tray "Tray icon, mute control and notifications for TeamSpeak 6"
+  title: TeamSpeak 6 Tray
+  setup: In TeamSpeak: Settings → Remote Apps → enable, port 5899
+  setup: First start asks TeamSpeak for approval. Details: https://github.com/Ritze03/ts6tray#setup
+
+[Websites]
+cs2-alias-cycling https://ritze03.github.io/stupid-pages/cs2-alias-cycling-generator.html "CS2 alias cycling config generator"
+  title: CS2 Alias Cycling
+cs2-chat-keybind https://ritze03.github.io/stupid-pages/cs2-chat-keybind-generator.html "CS2 chat keybind config generator"
+  title: CS2 Chat Keybind
+cs2-multimap https://ritze03.github.io/stupid-pages/cs2-multimap-generator.html "CS2 multimap config generator"
+  title: CS2 Multimap
+simple-screensharing-web https://ritze03.github.io/simple-screensharing/ "Watch or share a screen in the browser, no install"
+  title: Simple Screensharing (Web)
+walters-knaggertreff https://ritze03.github.io/walters-knaggertreff/ "Party board game full of German memes, 2-6 players in the browser"
+  title: Walters Knaggertreff
+
+[Other]
+ts6-themes https://ritze03.github.io/Teamspeak6Themes/ "Custom themes for the TeamSpeak 6 client"
+  title: TeamSpeak 6 Themes
