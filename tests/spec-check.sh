@@ -62,7 +62,7 @@ check_repo() {
 	code=$(grep -v '^[[:space:]]*#' install.sh)
 	printf '%s\n' "$code" | grep -Eq '(^|[^[:alnum:]_$./-])(sudo|pkexec|su|doas)([[:space:]]|$)' \
 		&& bad R37 "install.sh calls sudo/pkexec/su/doas directly: root only via \$RITZ_GET_SUDO (R33)" || ok R37 "no direct sudo/pkexec"
-	printf '%s\n' "$code" | grep -Eq 'git[[:space:]]+(pull|fetch|checkout|reset|clean|stash|commit|merge|rebase)' \
+	printf '%s\n' "$code" | grep -Eq 'git[[:space:]]+(pull|fetch|checkout|reset|clean|stash|commit|merge|rebase|submodule[[:space:]]+(update|add|init|sync|deinit))' \
 		&& bad R37 "install.sh runs a git command that changes the clone" || ok R37 "no git commands that change the clone"
 	printf '%s\n' "$code" | grep -Eq 'npm[[:space:]]+install|go[[:space:]]+mod[[:space:]]+tidy' \
 		&& bad R6 "install.sh runs npm install / go mod tidy (rewrites tracked files; use npm ci)" || ok R6 "no npm install / go mod tidy"
@@ -86,8 +86,10 @@ check_repo() {
 	T=$(mktemp -d) && T=$(cd "$T" && pwd -P) || { bad R6 "mktemp failed"; cd "$here"; return; }
 	H=$T/home C=$T/src/$NAME SUDO= P=$PATH
 	mkdir -p "$H" "$T/src" "$T/run"
-	if ! git clone -q "$R" "$C" 2>"$T/clone.err"; then
-		bad R6 "cannot clone $R (a git repo with at least one commit is needed): $(head -n 1 "$T/clone.err")"; cd "$here"; return
+	# clone, then the submodule update ritz-get runs after every clone/update/switch/reset
+	if ! { git clone -q "$R" "$C" && { [ ! -f "$C/.gitmodules" ] || { git -C "$C" submodule sync --recursive -q &&
+		git -C "$C" submodule update --init --recursive --jobs 4 -q; }; }; } 2>"$T/clone.err"; then
+		bad R6 "cannot clone $R or its submodules (a git repo with at least one commit is needed): $(head -n 1 "$T/clone.err")"; cd "$here"; return
 	fi
 	git -C "$R" ls-files -mo --exclude-standard 2>/dev/null | tar -C "$R" -cf - -T - 2>/dev/null | tar -C "$C" -xf - 2>/dev/null
 	base=$(git -C "$C" status --porcelain)
@@ -275,6 +277,7 @@ fixture() {
 	printf '/build/\n/dist/\n' > "$d/.gitignore"
 	[ -f "$S/$1.extra" ] && cp "$S/$1.extra" "$d/$1.desktop"
 	( cd "$d" && git init -q && git add -A && git -c user.name=t -c user.email=t@t commit -q -m fixture )
+	[ ! -d "$S/$1.sub" ] || ( cd "$d" && git submodule add -q "$S/$1.sub" vendor && git -c user.name=t -c user.email=t@t commit -q -m submodule )
 }
 
 svc_hook() {   # R20: an update must not bring back an autostart entry the user removed
@@ -302,6 +305,7 @@ selftest() {
 	printf '#!/bin/sh\n[ "$1" = --exists ] && [ "$2" = ritz-fixture-lib ]\n' > "$S/bin/pkg-config"
 	chmod +x "$S/bin/ritz-fixture-tool" "$S/bin/pkg-config"
 	PATH=$S/bin:$PATH; export PATH
+	GIT_ALLOW_PROTOCOL=file; export GIT_ALLOW_PROTOCOL	# the fixture submodule is a local repo; only the self-test allows file://
 
 	# --- basic: the template as it is, with a trivial build
 	cat > "$S/basic.sec" <<'EOF'
@@ -401,11 +405,23 @@ build() {
 install_files() { link "$dir/$TARGET" "$bin/$NAME"; }
 remove_files() { unlink_ours "$bin/$NAME"; }
 EOF
+	# --- sub: a git submodule (vendor/) whose file the build copies; install.sh never runs git
+	sed -e 's/^NAME=ritzfixbasic/NAME=ritzfixsub/' -e '/^build() {/,/^}/d' "$S/basic.sec" > "$S/sub.sec"
+	cat >> "$S/sub.sec" <<'EOF'
+build() {
+	cp vendor/payload "build/.$NAME.new"
+	chmod +x "build/.$NAME.new"
+	mv -f "build/.$NAME.new" "build/$NAME"
+}
+EOF
+	mkdir "$S/ritzfixsub.sub"
+	( cd "$S/ritzfixsub.sub" && git init -q && printf '#!/bin/sh\necho fixture-sub\n' > payload &&
+		git add -A && git -c user.name=t -c user.email=t@t commit -q -m payload )
 	# --- root: pattern P6 (the template's ROOT_LINK=yes)
 	sed -e 's/^NAME=ritzfixbasic/NAME=ritzfixroot/' -e 's/^ROOT_LINK=no/ROOT_LINK=yes/' "$S/basic.sec" > "$S/root.sec"
 
-	for v in basic service dirswap root; do
-		case $v in basic) n=ritzfixbasic ;; service) n=ritzfixsvc ;; dirswap) n=ritzfixdir ;; root) n=ritzfixroot ;; esac
+	for v in basic service dirswap root sub; do
+		case $v in basic) n=ritzfixbasic ;; service) n=ritzfixsvc ;; dirswap) n=ritzfixdir ;; root) n=ritzfixroot ;; sub) n=ritzfixsub ;; esac
 		mkdir -p "$S/repos"
 		cp "$S/$v.sec" "$S/$n.sec"; [ -f "$S/$v.extra" ] && cp "$S/$v.extra" "$S/$n.extra"
 		fixture "$n" "$v"

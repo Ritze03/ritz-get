@@ -60,10 +60,12 @@ Always with:
   - `XDG_*` variables may or may not be set.
 - **time limit**: a run that takes longer than 60 minutes is killed and counts as failed.
 
-Before `--install`, ritz-get has already cloned, fetched and checked out the commit to build.
-If `--install` fails, ritz-get puts the clone back on the previous commit and tells the user
-"your installed version is unchanged and still works", so a failed build MUST leave the old
-install working (R18). If the *first* install fails, ritz-get runs `--remove --yes` before it
+Before `--install`, ritz-get has already cloned, fetched and checked out the commit to build, and
+brought its submodules to the commits it records (`git submodule update --init --recursive` after
+every clone, update, switch and reset).
+If `--install` fails, ritz-get puts the clone (submodules included) back on the previous commit
+and tells the user "your installed version is unchanged and still works", so a failed build MUST
+leave the old install working (R18). If the *first* install fails, ritz-get runs `--remove --yes` before it
 deletes the clone, so `--remove` MUST cope with a half-finished install (R23). After a
 successful `--remove`, ritz-get deletes the clone.
 
@@ -262,8 +264,10 @@ updates never wait for a password. The template does all of it when you set `ROO
   1. call `sudo`, `pkexec`, `su` or `doas` directly (only `$RITZ_GET_SUDO`, R33);
   2. install system packages: it reports them with exit 3;
   3. run git commands that change the clone: no `pull`, `fetch`, `checkout`, `reset`, `clean`,
-     `stash`, `commit`. Read-only git (`rev-parse`, `describe`) is fine, with a fallback for when
-     it fails. Submodules and Git LFS are not supported;
+     `stash`, `commit`, `submodule update`. Read-only git (`rev-parse`, `describe`) is fine, with a
+     fallback for when it fails. Git submodules are allowed: ritz-get checks them out before
+     `--install`, so `install.sh` may assume they are present and must not fetch them itself. Git
+     LFS is not supported;
   4. modify tracked files (R6);
   5. write anywhere in the repo folder outside its own clone, or touch another program's files;
   6. write `.desktop` files into `~/.local/share/applications` (or anywhere else a menu reads),
@@ -586,7 +590,7 @@ printf '%s\n' 'myprog  Ritze03/myprog  "Download videos with a simple window"' |
 ## 7. Done when
 
 The check script does the whole routine below in a throwaway HOME, against a clone of your repo
-(plus your uncommitted changes), so it never touches your checkout or your real home. It runs
+(with its submodules, as ritz-get checks them out, plus your uncommitted changes), so it never touches your checkout or your real home. It runs
 `install.sh` exactly as ritz-get does: stdin `/dev/null`, the environment of section 1, no
 systemd user session.
 
@@ -620,7 +624,7 @@ What it checks:
   behind, exit 0 again, exit 0 on a partly installed program (R22 to R24)
 - programs that use root (`ROOT_LINK=yes`): exit 4 and `needs root:` without a password helper;
   one root call of the exact shape of R33; the pkexec results of R36 (R27, R32 to R36)
-- no direct `sudo`/`pkexec`, no `git pull`/`checkout`/..., no `npm install`, `go mod tidy` or
+- no direct `sudo`/`pkexec`, no `git pull`/`checkout`/`submodule update`/..., no `npm install`, `go mod tidy` or
   `cargo build` without `--locked`, no writes to `.../applications` (grep, R6, R37)
 - `NAME.desktop`, if present, is valid (R39)
 
@@ -681,7 +685,7 @@ When the version goes up, this file lists what to change, and
 - Dependencies between programs. If you need another program's build, build it yourself.
 - Root for anything but symlinks: `setcap`, `suid`, system packages and system services are the
   maintainer's job by hand, not a spec feature.
-- Submodules and Git LFS.
+- Git LFS.
 - A purge mode that deletes config and user data.
 - Skipping a rebuild when nothing changed: ritz-get calls `--install` when something did, and the
   build tool's own cache makes a repeat cheap.

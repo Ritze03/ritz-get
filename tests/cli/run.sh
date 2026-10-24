@@ -16,7 +16,7 @@ GIT_CONFIG_GLOBAL=$T/home/.gitconfig GIT_CONFIG_NOSYSTEM=1 GIT_ALLOW_PROTOCOL=fi
 export HOME XDG_CONFIG_HOME XDG_DATA_HOME XDG_CACHE_HOME XDG_RUNTIME_DIR TMPDIR LC_ALL RITZ_GET_GIT_BASE \
 	RITZ_GET_MANIFEST RITZ_GET_GUI GIT_CONFIG_GLOBAL GIT_CONFIG_NOSYSTEM GIT_ALLOW_PROTOCOL
 unset RITZ_GET_SUDO RITZ_GET_TIMEOUT RITZ_GET_OS_RELEASE RITZ_GET_SELF_UPDATED
-printf '[user]\n\tname = t\n\temail = t@t\n[init]\n\tdefaultBranch = main\n[advice]\n\tdetachedHead = false\n' >"$HOME/.gitconfig"
+printf '[user]\n\tname = t\n\temail = t@t\n[init]\n\tdefaultBranch = main\n[advice]\n\tdetachedHead = false\n[protocol "file"]\n\tallow = always\n' >"$HOME/.gitconfig"
 SRC=$XDG_DATA_HOME/ritz-get/src
 LOCK=$XDG_RUNTIME_DIR/ritz-get.lock
 P=0 F=0
@@ -555,6 +555,100 @@ eq "repair re-points the link" "$(cd "$T/empty" && pwd -P)/alpha/alpha" "$(readl
 rg dir "$SRC" --yes; rc "dir back to the default" 0; exists "default folder again" "$SRC/alpha/.git"
 rg remove alpha shorty shorty2 >/dev/null; rg shortcut site --remove >/dev/null
 gone "cleanup: shortcuts gone" "$SD2"; rm -f "$XDG_CONFIG_HOME/ritz-get/config"
+
+# ---- submodules ------------------------------------------------------------------------
+# ritz-get does all the git work, submodules included. Remotes are local bare repos; the test gitconfig
+# sets protocol.file.allow (ritz-get itself never does: real programs use https).
+mkdir -p "$T/remote/sub" "$T/work/sublib"
+(cd "$T/work/sublib" && git init -q -b main && echo v1 >data && git add -A && git commit -q -m v1 &&
+	git clone -q --bare . "$T/remote/sub/lib.git" && git remote add origin "$T/remote/sub/lib.git" && git fetch -q origin)
+mkrepo subby
+cat >"$T/work/subby/install.sh" <<'EOT'
+#!/bin/sh
+# ritz-get-spec: 1
+set -eu
+cd "$(dirname "$0")"
+case ${1:-} in
+--install)
+	[ "$(cat mode)" != fail ] || { echo boom >&2; exit 1; }
+	mkdir -p build; cat lib/data >build/seen; echo "subby installed (lib=$(cat lib/data))" ;;
+--remove) echo "subby removed" ;;
+*) exit 2 ;;
+esac
+EOT
+(cd "$T/work/subby" && git submodule add -q "file://$T/remote/sub/lib.git" lib && git add -A && git commit -q -m sub && git push -q origin main)
+printf 'subby t/subby "Has a submodule"\n' >>"$T/programs"
+# libcommit TEXT [nopush]: new commit in the submodule's remote; subpin [MODE]: point subby's main at it
+libcommit() { (cd "$T/work/sublib" && echo "$1" >data && git add -A && git commit -q -m "$1" && { [ -n "${2:-}" ] || git push -q origin main; }); }
+subpin() {
+	(cd "$T/work/subby" && git checkout -q main && git -C lib fetch -q "$T/work/sublib" main && git -C lib checkout -q FETCH_HEAD &&
+		{ [ -z "${1:-}" ] || echo "$1" >mode; } && git add -A && git commit -q -m pin && git push -q origin main)
+}
+seen() { eq "$1" "$2" "$(cat "$3/lib/data" 2>/dev/null) $(cat "$3/build/seen" 2>/dev/null)"; }	# submodule checkout + what the build saw
+SB=$SRC/subby
+
+rg install subby; rc "submodules: install" 0; has "install built it" "subby installed (lib=v1)"
+seen "install initialises the submodule" "v1 v1" "$SB"
+if [ -f "$SB/lib/.git" ]; then pass "submodule .git is a gitfile"; else bad "submodule .git is a gitfile" "not a file"; fi
+eq "initialised submodule: clone is not modified" "" "$(git -C "$SB" status --porcelain)"
+rg list --porcelain; eq "initialised submodule: status current" current "$(fld subby 8)"
+git -C "$SB" submodule deinit -q -f lib
+eq "un-initialised submodule: nothing in git status" "" "$(git -C "$SB" status --porcelain)"
+rg list --porcelain; eq "un-initialised submodule: not modified" "current 0 0" "$(fld subby 8) $(fld subby 14) $(fld subby 15)"
+rg install subby; rc "repair re-initialises the submodule" 0; seen "repair: submodule back" "v1 v1" "$SB"
+
+libcommit v2; subpin; rg update --yes; rc "update bumps the pointer" 0; has "update message" "subby: updated"
+seen "update moves the submodule" "v2 v2" "$SB"
+eq "update: clone clean" "" "$(git -C "$SB" status --porcelain)"
+
+o=$(sha subby); libcommit v3; subpin fail
+rg update --yes; rc "failing build with a new pin" 1; has "failed build reported" "subby: FAILED (install.sh exit 1)"
+eq "failed build: commit reverted" "$o" "$(sha subby)"
+seen "failed build: submodule checkout reverted" "v2 v2" "$SB"
+eq "failed build: clone clean again" "" "$(git -C "$SB" status --porcelain)"
+(cd "$T/work/subby" && echo ok >mode && git add -A && git commit -q -m okmode && git push -q origin main)
+rg update --yes; rc "update recovers" 0; seen "recovered: submodule at v3" "v3 v3" "$SB"
+
+# a branch with a different pin; one whose build fails
+(cd "$T/work/subby" && git checkout -q -b pin && git -C lib checkout -q "$(git -C "$T/work/sublib" rev-parse HEAD~2)" && git add -A &&
+	git commit -q -m oldpin && git push -q origin pin && git checkout -q -b badpin && echo fail >mode && git add -A &&
+	git commit -q -m bad && git push -q origin badpin && git checkout -q main && git submodule update -q)
+rg switch subby pin; rc "switch to a branch with another pin" 0; has "switch message" "subby: now on pin"
+seen "switch moves the submodule" "v1 v1" "$SB"
+eq "switch: clone clean" "" "$(git -C "$SB" status --porcelain)"
+rg switch subby badpin; rc "switch to a failing branch" 1
+eq "failed switch: back on pin" pin "$(git -C "$SB" rev-parse --abbrev-ref HEAD)"; seen "failed switch: submodule reverted" "v1 v1" "$SB"
+eq "failed switch: clone clean" "" "$(git -C "$SB" status --porcelain)"
+rg switch subby main; rc "switch back" 0; seen "switch back: submodule at v3" "v3 v3" "$SB"
+
+# local edits inside a submodule count as modified; reset discards them
+echo mine >"$SB/lib/data"
+rg list --porcelain; eq "edited submodule = modified" "modified" "$(fld subby 8)"
+rg update --yes; has "edited submodule: update skips" "subby: SKIPPED (local changes"
+rg reset subby --yes; rc "reset with an edited submodule" 0; has "reset message" "subby: reset to main"
+seen "reset: pristine submodule" "v3 v3" "$SB"
+eq "reset: clone clean" "" "$(git -C "$SB" status --porcelain)"
+rg list --porcelain; eq "reset: not modified" current "$(fld subby 8)"
+
+# a pin that does not exist upstream: update fails and reverts; a fresh install fails and cleans up
+o=$(sha subby); libcommit v4 nopush; subpin
+rg update --yes; rc "update with an unfetchable pin" 1; has "submodule failure reported" "subby: FAILED (submodules: "
+eq "submodule failure: commit reverted" "$o" "$(sha subby)"; seen "submodule failure: submodule untouched" "v3 v3" "$SB"
+eq "submodule failure: clone clean" "" "$(git -C "$SB" status --porcelain)"
+rg remove subby >/dev/null; rg install subby; rc "install with an unfetchable pin" 1
+has "install: submodule failure reported" "subby: FAILED (submodules: "; gone "failed install: clone removed" "$SB"
+(cd "$T/work/sublib" && git push -q origin main)
+rg install subby; rc "install once the pin exists" 0; seen "install at the new pin" "v4 v4" "$SB"
+
+# moving the folder keeps the submodule working (its .git is a relative gitfile)
+rg dir "$T/submoved" --yes; rc "dir move with a submodule" 0
+SM=$(cd "$T/submoved" && pwd -P)/subby
+eq "moved: submodule still a checkout" "v4 v4" "$(cat "$SM/lib/data") $(cat "$SM/build/seen")"
+eq "moved: git works in the submodule" "$(git -C "$SM" rev-parse HEAD:lib)" "$(git -C "$SM/lib" rev-parse HEAD)"
+eq "moved: clone clean" "" "$(git -C "$SM" status --porcelain)"
+libcommit v5; subpin; rg update --yes; rc "update after the move" 0; seen "moved: update bumps the submodule" "v5 v5" "$SM"
+rg dir "$SRC" --yes; rc "dir back (submodule program)" 0; seen "back: submodule intact" "v5 v5" "$SB"
+rg remove subby >/dev/null; gone "remove: clone with submodule deleted" "$SB"
 
 # ---- the real programs file ------------------------------------------------------------
 rge RITZ_GET_MANIFEST="$ROOT/programs" list --offline --porcelain; rc "real programs file parses" 0

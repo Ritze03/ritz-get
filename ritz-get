@@ -226,10 +226,18 @@ run_script() {
 	return 0
 }
 
-# build NAME: run the clone's install.sh --install.
+# sync_subs DIR: put DIR's submodules on the commits it records (ritz-get owns all git; WHY on failure)
+sync_subs() {
+	[ -f "$1/.gitmodules" ] || return 0
+	sq=$(git -C "$1" submodule sync --recursive -q 2>&1 && git -C "$1" submodule update --init --recursive --jobs 4 -q 2>&1) && return 0
+	WHY="submodules: $(printf '%s\n' "$sq" | head -n 1)"; return 1
+}
+
+# build NAME: sync submodules, then run the clone's install.sh --install.
 # rc 0 ok, 2 needs a newer ritz-get, 1 failed (BK = exit class 1|3|4, WHY = reason)
 build() {
 	BK=1 WHY=
+	sync_subs "$SRCDIR/$1" || return 1
 	[ -x "$SRCDIR/$1/install.sh" ] || { WHY="no executable install.sh in the repo"; return 1; }
 	v=$(head -n 5 "$SRCDIR/$1/install.sh" | sed -n 's/^# *ritz-get-spec: *\([0-9][0-9]*\).*/\1/p' | head -n 1)
 	[ "${v:-1}" -le "$SPEC" ] || return 2
@@ -338,7 +346,7 @@ want() { [ -z "$WANT" ] || case $WANT in *" $1 "*) return 0 ;; *) return 1 ;; es
 # probe NAME SRC BRANCH: installed -> git fetch, else one ls-remote. Result: f.NAME (rc), r.NAME, e.NAME
 probe() {
 	if is_installed "$1"; then
-		git -C "$SRCDIR/$1" fetch -q 2>"$TMP/e.$1" </dev/null
+		git -C "$SRCDIR/$1" fetch -q --no-recurse-submodules 2>"$TMP/e.$1" </dev/null
 	else
 		ref=HEAD; [ -z "$3" ] || ref=refs/heads/$3
 		git ls-remote "$BASE/$2.git" "$ref" >"$TMP/r.$1" 2>"$TMP/e.$1" </dev/null
@@ -462,7 +470,7 @@ upd_check() {
 	if modified "$n"; then
 		echo "$n: SKIPPED (local changes; ritz-get reset $n to discard them)"; SK=$((SK + 1)); return 0
 	fi
-	git -C "$d" fetch -q || { fail "$n" "fetch failed"; return 0; }
+	git -C "$d" fetch -q --no-recurse-submodules || { fail "$n" "fetch failed"; return 0; }
 	b=$(git -C "$d" rev-list --count 'HEAD..@{u}' 2>/dev/null)
 	if [ "${b:-0}" -eq 0 ]; then echo "$n: up to date"; else todo="$todo $n"; fi
 }
@@ -478,7 +486,7 @@ upd_apply() {
 		UP=$((UP + 1)); [ "$n" != ritz-get ] || SELFUP=1
 		return 0
 	fi
-	git -C "$d" reset -q --keep "$o"
+	git -C "$d" reset -q --keep "$o"; sync_subs "$d" || :
 	if [ "$r" -eq 2 ]; then echo "$n: SKIPPED (needs a newer ritz-get)"; SK=$((SK + 1))
 	else fail "$n" "$WHY" "$BK"; fi
 }
@@ -560,7 +568,7 @@ cmd_switch() {
 	valid "$n" || return 0
 	is_installed "$n" || { err "$n is not installed"; bump 1; return 0; }
 	old=$(branch "$n"); [ "$old" != HEAD ] || old=$(git -C "$d" rev-parse HEAD)
-	git -C "$d" fetch -q || { fail "$n" "fetch failed"; return 0; }
+	git -C "$d" fetch -q --no-recurse-submodules || { fail "$n" "fetch failed"; return 0; }
 	git -C "$d" checkout -q "$b" 2>/dev/null || { fail "$n" "cannot check out '$b'; see: ritz-get branches $n"; return 0; }
 	if ! git -C "$d" merge --ff-only -q '@{u}' >/dev/null 2>&1; then
 		git -C "$d" checkout -q "$old"
@@ -569,7 +577,7 @@ cmd_switch() {
 	echo "$n: building $b"
 	build "$n"; r=$?
 	if [ "$r" -eq 0 ]; then echo "$n: now on $b $(short "$n")"; sc_refresh "$n"; return 0; fi
-	git -C "$d" checkout -q "$old"
+	git -C "$d" checkout -q "$old"; sync_subs "$d" || :
 	if [ "$r" -eq 2 ]; then echo "$n: SKIPPED (needs a newer ritz-get)"; bump 1
 	else fail "$n" "$WHY" "$BK"; fi
 }

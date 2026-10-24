@@ -104,6 +104,7 @@ can't be cloned by other people, so they stay out.
 A program is a git repo with an executable `install.sh` that ritz-get runs from inside the
 clone. The rules (what `install.sh` must do, exit codes, the optional shortcut and icon files)
 are in [SPEC.md](SPEC.md), and [`template/install.sh`](template/install.sh) is the file to start from.
+Git submodules are fine: ritz-get keeps them in sync on every install, update, switch and reset.
 
 ## For frontends
 
