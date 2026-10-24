@@ -56,7 +56,7 @@ case ${1:-} in
 		echo "missing: noapt (try: pacman:nap)" >&2; exit 3 ;;
 	root) echo "needs root: run ritz-get install @NAME@ in a terminal" >&2; exit 4 ;;
 	fail) echo boom >&2; exit 1 ;;
-	slow) sleep 30 ;;
+	slow) echo $$ >"$HOME/slow.pid"; sleep 30 ;;
 	esac
 	mkdir -p "$bin"
 	ln -sfn "$(pwd -P)/@NAME@" "$bin/@NAME@"
@@ -92,6 +92,7 @@ mkrepo eps 1 fail; mkrepo zeta 1 slow; mkrepo eta 2
 # ritz-get itself: the real script and install.sh
 mkdir -p "$T/work/ritz-get"
 cp "$ROOT/ritz-get" "$ROOT/install.sh" "$T/work/ritz-get/"
+mkdir -p "$T/work/ritz-get/icons"; printf '\211PNG\r\n\032\n' >"$T/work/ritz-get/icons/site.png"
 (cd "$T/work/ritz-get" && git init -q -b main && git add -A && git commit -q -m v0 &&
 	git clone -q --bare . "$T/remote/t/ritz-get.git" && git remote add origin "$T/remote/t/ritz-get.git" &&
 	git fetch -q origin && git branch -q -u origin/main)
@@ -376,6 +377,9 @@ rg remove orphan; rc "remove an unlisted clone" 0; gone "unlisted clone deleted"
 rg remove alpha; rc "remove" 0; has "removed line" "alpha: removed"
 gone "remove: link gone" "$HOME/.local/bin/alpha"; gone "remove: clone gone" "$SRC/alpha"
 rg uninstall beta; rc "uninstall alias" 0; gone "uninstall: clone gone" "$SRC/beta"
+rg install beta >/dev/null; chmod -x "$SRC/beta/install.sh"
+rg remove beta; rc "remove without an executable install.sh" 0; gone "no executable install.sh: clone gone" "$SRC/beta"
+if [ -L "$HOME/.local/bin/beta" ]; then bad "no executable install.sh: no dangling link" "$HOME/.local/bin/beta is left"; else pass "no executable install.sh: no dangling link"; fi
 rg remove nope; rc "remove unknown" 1; has "unknown, not 'not installed'" "unknown program: nope"
 rg remove gamma; rc "remove known but not installed" 0; has "not installed" "gamma: not installed"
 rg remove ritz-get; rc "remove ritz-get refused" 1; exists "ritz-get clone kept" "$SRC/ritz-get/.git"
@@ -395,6 +399,29 @@ rc "cron (no tty, no GUI): busy update exits 0" 0
 eq "cron: silent" "" "$(cat "$T/all")"
 kill "$HOLD"; wait "$HOLD" 2>/dev/null; HOLD=
 rg update --yes; rc "lock released with the process" 0
+
+# ---- interrupt: INT/TERM stop a running build ------------------------------------------
+newcommit zeta ok; rg install zeta >/dev/null; newcommit zeta slow; zold=$(sha zeta)
+# intr SIGNAL CODE: update zeta (a 30 s build) in the background, signal ritz-get's pid, expect exit CODE soon
+intr() {
+	rm -f "$HOME/slow.pid" "$T/irc" "$T/ipid"
+	set -m	# job control, so the background job does not start with SIGINT ignored
+	( sh -c 'echo $$ >"$1"; exec sh "$2" update zeta --yes' x "$T/ipid" "$RG" >"$T/out" 2>"$T/err" </dev/null; echo $? >"$T/irc" ) &
+	set +m
+	i=0; while [ ! -s "$HOME/slow.pid" ] && [ "$i" -lt 100 ]; do sleep 0.1; i=$((i + 1)); done
+	kill -"$1" "$(cat "$T/ipid")"
+	i=0; while [ ! -s "$T/irc" ] && [ "$i" -lt 60 ]; do sleep 0.1; i=$((i + 1)); done
+	if [ -s "$T/irc" ]; then pass "$1: ritz-get exits within 6 s"; else bad "$1: ritz-get exits within 6 s" "still running"; kill -KILL "$(cat "$T/ipid")"; fi
+	sleep 0.3; cat "$T/out" "$T/err" >"$T/all"
+	eq "$1: exit code" "$2" "$(cat "$T/irc" 2>/dev/null)"
+	has "$1: FAILED (interrupted)" "zeta: FAILED (interrupted)"; has "$1: trailer" "your installed version is unchanged"
+	eq "$1: old version still in place" "$zold" "$(sha zeta)"
+	if kill -0 "$(cat "$HOME/slow.pid")" 2>/dev/null; then bad "$1: install.sh is gone" "pid $(cat "$HOME/slow.pid") still runs"; else pass "$1: install.sh is gone"; fi
+	exists "$1: link kept" "$HOME/.local/bin/zeta"
+}
+intr INT 130
+intr TERM 143
+rg remove zeta >/dev/null; rm -f "$HOME/slow.pid"
 
 # ---- shortcuts -------------------------------------------------------------------------
 APPS=$XDG_DATA_HOME/applications
@@ -508,12 +535,14 @@ eq "dir: shortcut link re-pointed" "$T/moved/.ritz-get/ritz-get-shorty.desktop" 
 exists "dir: shortcut not dangling" "$SD"
 eq "dir: shortcut regenerated (Icon)" "$T/moved/shorty/icon.png" "$(kv "$SD" Icon)"
 eq "dir: website shortcut re-pointed" "$T/moved/.ritz-get/ritz-get-site.desktop" "$(readlink "$SW")"; exists "dir: website shortcut not dangling" "$SW"
+eq "dir: website shortcut keeps Icon= (icons/ of the moved clone)" "$T/moved/ritz-get/icons/site.png" "$(kv "$SW" Icon)"
 rg list --porcelain --offline; eq "dir: still installed" installed "$(fld alpha 7)"
 mv "$T/moved" "$T/hand"
 rg dir "$T/hand"; rc "dir after moving by hand" 0
 rg dir; eq "hand-moved: config updated" "$T/hand" "$(cat "$T/out")"
 eq "hand-moved: links repaired" "$(cd "$T/hand" && pwd -P)/alpha/alpha" "$(readlink "$HOME/.local/bin/alpha")"
 eq "hand-moved: shortcuts repaired" "$T/hand/.ritz-get/ritz-get-shorty.desktop" "$(readlink "$SD")"
+eq "hand-moved: website shortcut Icon=" "$T/hand/ritz-get/icons/site.png" "$(kv "$SW" Icon)"
 mkdir -p "$T/empty"; echo fail >"$T/hand/alpha/mode"
 rg dir "$T/empty" --yes; rc "dir with a failing repair" 1
 has "needs repair line" "alpha: needs repair: ritz-get install alpha"
@@ -546,7 +575,7 @@ eq "Software entries: valid description and title" 0 "$(awk -F'\t' '$1 == "E" &&
 # inst HOME [ENV=val...]: no controlling terminal (setsid), stdin /dev/null, XDG_* unset, manifest from the clone
 inst() {
 	h=$1; shift; mkdir -p "$h"
-	setsid -w env -u XDG_DATA_HOME -u XDG_CONFIG_HOME -u XDG_CACHE_HOME -u RITZ_GET_MANIFEST -u RITZ_GET_DIR HOME="$h" "$@" \
+	setsid -w env -u XDG_DATA_HOME -u XDG_CONFIG_HOME -u XDG_CACHE_HOME -u RITZ_GET_MANIFEST -u RITZ_GET_DIR HOME="$h" SHELL=/bin/bash "$@" \
 		sh "$ROOT/install-ritz-get.sh" >"$T/out" 2>"$T/err" </dev/null; done_run
 }
 inst "$T/ih1" RITZ_GET_DIR="$T/ih1/clones"; rc "installer (no tty, RITZ_GET_DIR)" 0
@@ -554,10 +583,14 @@ exists "installer: clone in RITZ_GET_DIR" "$T/ih1/clones/ritz-get/.git"
 eq "installer: config written for a non-default folder" "dir=$T/ih1/clones" "$(cat "$T/ih1/.config/ritz-get/config")"
 eq "installer: ran install.sh" "$T/ih1/clones/ritz-get/ritz-get" "$(readlink "$T/ih1/.local/bin/ritz-get")"
 has "installer: PATH hint" 'export PATH="$HOME/.local/bin:$PATH"'
+eq "installer: PATH hint printed once" 1 "$(grep -c 'not in your PATH' "$T/all")"
 gone "installer: no tty, no ~/.profile edit" "$T/ih1/.profile"
 gone "installer: no tty, no GUI" "$T/ih1/clones/ritz-get-gui"
 eq "installer: the installed ritz-get uses the folder" "$T/ih1/clones" "$(env -u XDG_DATA_HOME -u XDG_CONFIG_HOME -u RITZ_GET_MANIFEST HOME="$T/ih1" sh "$T/ih1/.local/bin/ritz-get" dir)"
 inst "$T/ih1" RITZ_GET_DIR="$T/ih1/clones"; rc "installer, second run" 0; has "already installed" "already installed"; has "points to update" "ritz-get update"
+inst "$T/ih1"; rc "installer, second run, folder from the config" 0
+eq "second run: 'already installed' comes first" "ritz-get is already installed in $T/ih1/clones/ritz-get - use: ritz-get update" "$(head -n 1 "$T/out")"
+lacks "second run: no folder question" "Folder for the clones"
 mkdir -p "$T/ih2"
 setsid -w env -u XDG_DATA_HOME -u XDG_CONFIG_HOME -u XDG_CACHE_HOME -u RITZ_GET_MANIFEST -u RITZ_GET_DIR HOME="$T/ih2" \
 	sh -c 'cat "$0" | sh' "$ROOT/install-ritz-get.sh" >"$T/out" 2>"$T/err" </dev/null; done_run
@@ -567,7 +600,8 @@ exists "piped: default folder" "$T/ih2/.local/share/ritz-get/src/ritz-get/.git";
 printf '%s\ny\ny\n' "$T/ih3/f" >"$T/ans3"
 inst "$T/ih3" RITZ_GET_TTY="$T/ans3"; rc "installer with answers (folder, PATH yes, GUI yes)" 0
 eq "answers: folder" "dir=$T/ih3/f" "$(cat "$T/ih3/.config/ritz-get/config")"
-has "answers: PATH edit" "Added."; has "answers: profile has the line" ".local/bin"
+has "answers: PATH edit" "Added to ~/.profile."; has "answers: profile has the line" ".local/bin"
+has "answers: the prompt names the file" "Add it to ~/.profile for you now?"
 eq "answers: ~/.profile" 'export PATH="$HOME/.local/bin:$PATH"' "$(grep '^export PATH' "$T/ih3/.profile")"
 exists "answers: GUI installed" "$T/ih3/f/ritz-get-gui/.git"
 exists "answers: GUI shortcut" "$T/ih3/.local/share/applications/ritz-get-ritz-get-gui.desktop"
@@ -580,8 +614,46 @@ has "GUI deps line" "deps: sudo pacman -S --needed gcc p1 p2"
 exists "defaults: blank folder answer" "$T/ih4/.local/share/ritz-get/src/ritz-get/.git"; gone "no PATH edit after n" "$T/ih4/.profile"
 lacks "no app menu hint" "Open ritz-get-gui from your app menu"
 mkdir -p "$T/nogit"; ln -sf "$(command -v id)" "$T/nogit/id"
-setsid -w env PATH="$T/nogit" HOME="$T/ih5" "$(command -v sh)" "$ROOT/install-ritz-get.sh" >"$T/out" 2>"$T/err" </dev/null; done_run
+setsid -w env PATH="$T/nogit" HOME="$T/ih5" RITZ_GET_OS_RELEASE="$T/os-other" "$(command -v sh)" "$ROOT/install-ritz-get.sh" >"$T/out" 2>"$T/err" </dev/null; done_run
 rc "installer without git" 3; has "missing git line" "missing: git (try: pacman:git dnf:git apt:git)"
+lacks "no git hint: unknown distro" "sudo"
+for d in arch:"sudo pacman -S git" fedora:"sudo dnf install git" ubuntu:"sudo apt install git"; do
+	setsid -w env PATH="$T/nogit" HOME="$T/ih5" RITZ_GET_OS_RELEASE="$T/os-${d%%:*}" "$(command -v sh)" "$ROOT/install-ritz-get.sh" >"$T/out" 2>"$T/err" </dev/null; done_run
+	rc "installer without git on ${d%%:*}" 3; has "git hint for ${d%%:*}" "${d#*:}"
+done
+
+# PATH line: the login file the shell reads (zsh: .zprofile; bash: .bash_profile, .bash_login, .profile)
+printf '\ny\nn\n' >"$T/ansp"
+inst "$T/ihz" RITZ_GET_TTY="$T/ansp" SHELL=/usr/bin/zsh; rc "installer, zsh" 0
+has "zsh: prompt names ~/.zprofile" "Add it to ~/.zprofile for you now?"; has "zsh: confirmation names it" "Added to ~/.zprofile."
+exists "zsh: ~/.zprofile written" "$T/ihz/.zprofile"; gone "zsh: ~/.profile untouched" "$T/ihz/.profile"
+mkdir -p "$T/ihb"; : >"$T/ihb/.bash_profile"; : >"$T/ihb/.bash_login"
+inst "$T/ihb" RITZ_GET_TTY="$T/ansp"; rc "installer, bash with ~/.bash_profile" 0
+has "bash_profile: confirmation names it" "Added to ~/.bash_profile."; eq "bash_profile: line added" 1 "$(grep -c '^export PATH' "$T/ihb/.bash_profile")"
+gone "bash_profile: ~/.profile untouched" "$T/ihb/.profile"; eq "bash_profile: ~/.bash_login untouched" 0 "$(wc -c <"$T/ihb/.bash_login" | tr -d ' ')"
+mkdir -p "$T/ihl"; : >"$T/ihl/.bash_login"
+inst "$T/ihl" RITZ_GET_TTY="$T/ansp"; rc "installer, bash with ~/.bash_login" 0
+has "bash_login: confirmation names it" "Added to ~/.bash_login."; gone "bash_login: ~/.profile untouched" "$T/ihl/.profile"
+
+# a failing install.sh: the new clone is deleted, a rerun does not claim success
+mkdir -p "$T/remote2/Ritze03" "$T/work/bad"
+printf '#!/bin/sh\necho nope >&2\nexit 1\n' >"$T/work/bad/install.sh"; chmod +x "$T/work/bad/install.sh"
+(cd "$T/work/bad" && git init -q -b main && git add -A && git commit -q -m v0 && git clone -q --bare . "$T/remote2/Ritze03/ritz-get.git")
+inst "$T/ihf" RITZ_GET_DIR="$T/ihf/c" RITZ_GET_GIT_BASE="file://$T/remote2"; rc "installer, failing install.sh" 1
+has "failing: says so" "ritz-get's install.sh failed"; gone "failing: the new clone is deleted" "$T/ihf/c/ritz-get"; gone "failing: no link" "$T/ihf/.local/bin/ritz-get"
+inst "$T/ihf" RITZ_GET_DIR="$T/ihf/c"; rc "rerun after the failure installs for real" 0
+lacks "rerun: no false 'already installed'" "already installed"; exists "rerun: link exists" "$T/ihf/.local/bin/ritz-get"
+mkdir -p "$T/ihe/c/ritz-get"
+inst "$T/ihe" RITZ_GET_DIR="$T/ihe/c" RITZ_GET_GIT_BASE="file://$T/remote2"; rc "failing install.sh into an existing empty folder" 1
+exists "pre-existing folder is kept" "$T/ihe/c/ritz-get"; eq "pre-existing folder is emptied again" 0 "$(ls -A "$T/ihe/c/ritz-get" | wc -l | tr -d ' ')"
+# a clone without its link is repaired by re-running install.sh, not reported as installed
+rm -f "$T/ihf/.local/bin/ritz-get"
+inst "$T/ihf" RITZ_GET_DIR="$T/ihf/c"; rc "installer, clone without link" 0
+has "no link: repairing" "repairing"; lacks "no link: not 'already installed'" "already installed"
+eq "no link: link restored" "$T/ihf/c/ritz-get/ritz-get" "$(readlink "$T/ihf/.local/bin/ritz-get")"
+ln -sfn /nowhere/ritz-get "$T/ihf/.local/bin/ritz-get"
+inst "$T/ihf" RITZ_GET_DIR="$T/ihf/c"; rc "installer, link pointing elsewhere" 0
+eq "elsewhere: link restored" "$T/ihf/c/ritz-get/ritz-get" "$(readlink "$T/ihf/.local/bin/ritz-get")"
 
 # ---- config: dir= ----------------------------------------------------------------------
 mkdir -p "$XDG_CONFIG_HOME/ritz-get"
