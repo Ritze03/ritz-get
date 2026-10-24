@@ -313,7 +313,7 @@ svc_hook() {   # R20: an update must not bring back an autostart entry the user 
 swap_hook() {  # P3: repeated builds keep at most the current and the previous directory
 	mkdir -p "$C/build/stale"; ln -sfn stale "$C/build/.current.new"   # a stale temp link to a directory must not fool the swap
 	run s1 --install --yes; run s2 --install --yes
-	[ ! -e "$C/build/stale/.current.new" ] && ok R18 "a stale build/.current.new link does not capture the new link" || bad R18 "ln without -n created the swap link inside the old directory (use ln -sfn)"
+	[ -z "$(ls -A "$C/build/stale")" ] && ok R18 "a stale build/.current.new link does not capture the new link" || bad R18 "ln without -n created the swap link inside the old directory (use ln -sfn)"
 	n=$(ls -d "$C"/build/app-* 2>/dev/null | wc -l)
 	[ "$n" -le 2 ] && [ "$n" -ge 1 ] && [ -x "$H/.local/bin/$NAME" ] && ok R18 "directory swap keeps $n app dir(s) and a working command" || bad R18 "directory swap left $n app dirs"
 }
