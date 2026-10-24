@@ -1,59 +1,72 @@
 # ritz-get
 
 Installs, updates and removes Ritze03's programs on any Linux distro. Every program is built
-on your machine from a git clone, into `$HOME`; nothing needs root unless a program's own
-`install.sh` asks for it.
+on your machine from a git clone, into your home folder; nothing needs root unless a program
+says so. It also lists a few websites, so everything of Ritze03's is in one place.
 
-Each program lives as a clone in `~/.local/share/ritz-get/src/NAME`. The clone is the whole
-state: a program is installed if its clone exists, the checked-out branch is the branch you
-run, and `HEAD` is the version. There are no other state files. ritz-get itself is one of the
-clones, and `~/.local/bin/ritz-get` is a symlink into it.
+Each program is a git clone in one folder. The clone is the whole state: a program is
+installed if its clone exists, the checked-out branch is the branch you run, and `HEAD` is the
+version. There are no other state files.
 
 ## Install
 
+With the one-time installer:
+
 ```sh
-git clone https://github.com/Ritze03/ritz-get "${XDG_DATA_HOME:-$HOME/.local/share}/ritz-get/src/ritz-get" && "${XDG_DATA_HOME:-$HOME/.local/share}/ritz-get/src/ritz-get/install.sh" --install
+curl -fsSL https://github.com/Ritze03/ritz-get/releases/latest/download/install-ritz-get.sh | sh
 ```
 
-Make sure `~/.local/bin` is in your `$PATH`. Remove ritz-get with `install.sh --remove` from
-that clone, then delete `~/.local/share/ritz-get`.
+It checks for `git`, asks where to keep the clones (the default is fine), installs ritz-get,
+and offers to put `~/.local/bin` on your `PATH`. After that ritz-get updates itself.
+
+Without the installer:
+
+```sh
+git clone https://github.com/Ritze03/ritz-get ~/.local/share/ritz-get/src/ritz-get && ~/.local/share/ritz-get/src/ritz-get/install.sh --install --yes
+```
+
+Make sure `~/.local/bin` is in your `PATH`. To remove ritz-get, run `install.sh --remove` from
+its clone and delete the folder.
 
 ## Requirements
 
-- `git` and a POSIX `sh` plus coreutils. ritz-get itself needs nothing else.
-- Whatever a program needs to build (`go`, `cargo`, `npm`, a C++ compiler, ...). The program's
-  `install.sh` checks for it first and, if it is missing, tells you the package to install
-  (`pacman -S`, `dnf install` or `apt install`).
-- Go programs set `GOTOOLCHAIN=auto`: the Go version they ask for is newer than most distro
-  Go packages, so any Go 1.21 or newer works and downloads the right toolchain itself.
+- `git` and a POSIX `sh` with the usual tools (coreutils, util-linux, `awk`). That is all ritz-get needs.
+- Whatever a program needs to build (`go`, `cargo`, `npm`, a C++ compiler, ...). If something is
+  missing, ritz-get prints one line to copy, like `deps: sudo pacman -S --needed gcc`
+  (also for `dnf` and `apt`), and exits with code 3.
 
-## Usage
+## Commands
 
 ```sh
-ritz-get list                          # programs, installed or not, branch, commit, behind or not
-ritz-get install ccorral               # clone, build, install
-ritz-get install ccorral --branch dev  # same, from another branch
-ritz-get update                        # update ritz-get, then rebuild what changed
-ritz-get update --yes ccorral          # no question; only the named programs
-ritz-get branches ccorral              # branches of the remote, current one marked with *
-ritz-get switch ccorral dev            # check out another branch and rebuild
-ritz-get remove ccorral                # install.sh --remove, then delete the clone
+ritz-get list [NAME...]            # programs and websites, installed or not, up to date or not
+ritz-get install NAME...           # clone, build, install (on an installed program: repair)
+ritz-get install NAME --branch B   # same, from another branch
+ritz-get update [NAME...]          # update ritz-get, then rebuild what changed (asks first)
+ritz-get remove NAME...            # uninstall and delete the clone (alias: uninstall)
+ritz-get branches NAME             # branches of the remote, the current one marked with *
+ritz-get switch NAME BRANCH        # check out another branch and rebuild
+ritz-get reset NAME                # throw away local changes: re-clone and rebuild
+ritz-get hold NAME                 # leave NAME out of a plain 'update' (unhold: undo)
+ritz-get open NAME                 # open a website in your browser
+ritz-get shortcut NAME             # add a start-menu shortcut (--remove: take it away)
+ritz-get shortcuts [PATH]          # show, or move, the folder the shortcuts live in
+ritz-get dir [PATH]                # show, or move, the folder the clones live in
 ritz-get help
 ```
 
-`update` first pulls ritz-get's own clone and, if that changed, restarts itself with the same
-arguments. Then it fetches every installed program (or the named ones). A program whose branch
-has new commits is fast-forwarded and rebuilt with `./install.sh --install --yes`; one that
-hasn't moved is just reported as up to date and not rebuilt. Without `--yes` it lists what
-will be rebuilt and asks once. A failure in one program doesn't stop the others and the exit
-code is non-zero at the end. If the pull can't fast-forward (local changes in the clone, or a
-force-pushed branch) the program is skipped and reported. If a rebuild fails, the clone goes
-back to the commit it was on, so the next `update` tries again.
+Options: `--yes` answers "yes" to every question, `--offline` makes `list` skip the network,
+`--all` makes `list` show programs you have no access to, `--porcelain` is for frontends.
 
-A failed `install` deletes the clone again and prints the tail of the build log, so a program
-is never half installed. A failed `switch` goes back to the previous branch.
-
-`list` doesn't fetch, so "behind by N" is as of the last `update`.
+- `update` first updates ritz-get itself and, if that changed, continues with the new version.
+  It then rebuilds every installed program whose branch has new commits. A failure in one
+  program doesn't stop the others; the exit code is non-zero at the end. A failed build leaves
+  the installed version as it was. `update` ends with `N updated, N skipped, N failed`.
+- Programs you changed yourself (edited files or local commits) are marked `modified` and
+  skipped by `update`, so your work is never overwritten. `reset NAME` discards the changes.
+- `list` checks what is new on the remote; `list --offline` doesn't.
+- A program may print extra steps after installing ("Additional steps required"); do those by hand.
+- Shortcuts are flat entries in your app menu, named `ritz-get-NAME.desktop`. Only programs that
+  ship a `NAME.desktop` can have one; websites always can. `remove NAME` takes the shortcut away.
 
 ## In your update script
 
@@ -63,39 +76,40 @@ If you already update your system in a script, add one line next to `yay` or `fl
 ritz-get update --yes
 ```
 
+Held and modified programs are skipped, and a second ritz-get running at the same time is
+detected, so this is safe to run from cron.
+
+## Where things live
+
+- The clones: `~/.local/share/ritz-get/src/NAME` by default. Everything ritz-get puts elsewhere
+  (`~/.local/bin/NAME`, shortcuts) is a symlink into that folder, or a file generated inside it
+  (`.ritz-get/`).
+- Settings, only if you changed them: `~/.config/ritz-get/config`, with `key=value` lines.
+  - `dir=` is the folder for the clones. `ritz-get dir PATH` moves the whole folder there in one
+    step and repairs every program's links. If you moved it by hand, run `ritz-get dir PATH` to
+    tell ritz-get. The folder can be your own development folder: clones with changes are never touched.
+  - `shortcuts=` is the folder for the shortcuts, `~/.local/share/applications` by default.
+    `ritz-get shortcuts PATH` moves them.
+- `${XDG_CACHE_HOME:-~/.cache}/ritz-get/last-run`: the summary of the last `update`.
+
 ## Programs
 
-The list is `programs` in this repo, one per line, `#` for comments:
-
-```
-NAME  REPO  [BRANCH]
-```
-
-`REPO` is `owner/name` on GitHub, cloned from `https://github.com/REPO.git`. `BRANCH` is
-optional; without it you get the remote's default branch. Adding a program is a commit to this
-file; everyone gets it with their next `ritz-get update`. Programs in private repos can't be
-cloned by other people, so they stay commented out.
+The list is [`programs`](programs) in this repo: sections, programs (`NAME OWNER/REPO "description"`)
+and websites (`NAME URL "description"`). The file explains its own format. Adding an entry is a
+commit to that file; everyone gets it with their next `ritz-get update`. Programs in private repos
+can't be cloned by other people, so they stay out.
 
 ## For program repos
 
-Every program repo has an executable `install.sh` at its root. ritz-get runs it from inside the
-clone:
+A program is a git repo with an executable `install.sh` that ritz-get runs from inside the
+clone. The rules (what `install.sh` must do, exit codes, the optional shortcut and icon files)
+are in [SPEC.md](SPEC.md), and [`template/install.sh`](template/install.sh) is the file to start from.
+Git submodules are fine: ritz-get keeps them in sync on every install, update, switch and reset.
 
-```sh
-./install.sh --install --yes    # build from the working tree and install into $HOME
-./install.sh --remove --yes     # uninstall; never touches config or user data
-```
+## For frontends
 
-`--install` is also what runs for an update, so it must be safe to run over an existing install.
-It decides how to build and where files go; ritz-get only calls it and cares about the exit
-code. A human running it without `--yes` gets the program's own questions.
-
-Two templates to copy and edit, both with a required-tools check and distro hints:
-
-- `template/install.sh`: generic, with `build()`, `install_files()` and `remove_files()`.
-  For programs that are just files to place (binaries, AppImages, desktop files, build from source).
-- `template/install-self.sh`: for programs with a built-in installer. Builds, then runs
-  `./NAME install`; `--remove` runs `NAME uninstall`. That's what ccorral and ts6tray use.
+`ritz-get list --porcelain` is a stable, tab-separated format for GUIs and scripts. It and the
+exit codes are described in [PORCELAIN.md](PORCELAIN.md).
 
 ## License
 
