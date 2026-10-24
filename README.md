@@ -30,7 +30,7 @@ its clone and delete the folder.
 
 ## Requirements
 
-- `git` and a POSIX `sh` with the usual tools (coreutils, util-linux). That is all ritz-get needs.
+- `git` and a POSIX `sh` with the usual tools (coreutils, util-linux, `awk`). That is all ritz-get needs.
 - Whatever a program needs to build (`go`, `cargo`, `npm`, a C++ compiler, ...). If something is
   missing, ritz-get prints one line to copy, like `deps: sudo pacman -S --needed gcc`
   (also for `dnf` and `apt`), and exits with code 3.

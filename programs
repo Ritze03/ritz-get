@@ -2,7 +2,7 @@
 #
 # A line starting with [Name] opens a section; the sections are shown in this order.
 # Entries before the first section belong to [Software]. '#' starts a comment only as the
-# first character of a line (so URLs may contain '#').
+# first non-blank character of a line (so URLs may contain '#').
 #
 # A program (a git repo with an executable ./install.sh, see SPEC.md):
 #   NAME OWNER/REPO [BRANCH] "DESCRIPTION"
