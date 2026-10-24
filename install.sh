@@ -3,10 +3,11 @@
 # ritz-get's own install.sh: links ~/.local/bin/ritz-get to this clone's ritz-get.
 # Usage: ./install.sh --install | --remove [--yes]
 set -eu
+NAME=ritz-get
 mode=
 for a; do
 	case $a in
-	--install|--remove) mode=$a ;;
+	--install|--remove) [ -z "$mode" ] || { echo "usage: $0 --install | --remove [--yes]" >&2; exit 2; }; mode=$a ;;
 	--yes) ;;
 	*) echo "usage: $0 --install | --remove [--yes]" >&2; exit 2 ;;
 	esac
@@ -20,14 +21,14 @@ case $mode in
 --install)
 	command -v git >/dev/null 2>&1 || { echo "missing: git (try: pacman:git dnf:git apt:git)" >&2; exit 3; }
 	mkdir -p "$bin"
-	ln -sfn "$here/ritz-get" "$bin/ritz-get"
-	echo "linked $bin/ritz-get -> $here/ritz-get"
+	ln -sfn "$here/ritz-get" "$bin/$NAME"
+	echo "linked $bin/$NAME -> $here/ritz-get"
 	case ":$PATH:" in *":$bin:"*) ;; *) echo "note: $bin is not in your PATH" ;; esac
 	;;
 --remove)
-	if [ -L "$bin/ritz-get" ] && [ "$(readlink "$bin/ritz-get")" = "$here/ritz-get" ]; then
-		rm -f "$bin/ritz-get"
-		echo "removed $bin/ritz-get"
+	if [ -L "$bin/$NAME" ] && [ "$(readlink "$bin/$NAME")" = "$here/ritz-get" ]; then
+		rm -f "$bin/$NAME"
+		echo "removed $bin/$NAME"
 	fi
 	;;
 esac
