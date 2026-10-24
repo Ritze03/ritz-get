@@ -1,0 +1,371 @@
+#!/bin/sh
+# CLI tests for ritz-get: sh tests/cli/run.sh
+# Everything happens in a throwaway HOME against local bare repos (file://); no network, no real HOME.
+# Prints "PASS name" / "FAIL name: why", then "ALL PASS" or "N FAILED"; exit status follows.
+ROOT=$(cd "$(dirname "$0")/../.." && pwd -P)
+RG=$ROOT/ritz-get
+for c in git flock timeout awk; do command -v "$c" >/dev/null 2>&1 || { echo "FAIL setup: $c not installed"; exit 1; }; done
+T=$(mktemp -d "${TMPDIR:-/tmp}/ritz-get-test.XXXXXX") || exit 1
+HOLD=
+trap '[ -z "$HOLD" ] || kill "$HOLD" 2>/dev/null; rm -rf "$T"' EXIT
+mkdir -p "$T/home" "$T/run" "$T/tmp" "$T/remote/t" "$T/work"
+HOME=$T/home XDG_CONFIG_HOME=$T/home/.config XDG_DATA_HOME=$T/home/.local/share XDG_CACHE_HOME=$T/home/.cache
+XDG_RUNTIME_DIR=$T/run TMPDIR=$T/tmp LC_ALL=C
+RITZ_GET_GIT_BASE=file://$T/remote RITZ_GET_MANIFEST=$T/programs RITZ_GET_GUI=1
+GIT_CONFIG_GLOBAL=$T/home/.gitconfig GIT_CONFIG_NOSYSTEM=1 GIT_ALLOW_PROTOCOL=file
+export HOME XDG_CONFIG_HOME XDG_DATA_HOME XDG_CACHE_HOME XDG_RUNTIME_DIR TMPDIR LC_ALL RITZ_GET_GIT_BASE \
+	RITZ_GET_MANIFEST RITZ_GET_GUI GIT_CONFIG_GLOBAL GIT_CONFIG_NOSYSTEM GIT_ALLOW_PROTOCOL
+unset RITZ_GET_SUDO RITZ_GET_TIMEOUT RITZ_GET_OS_RELEASE RITZ_GET_SELF_UPDATED
+printf '[user]\n\tname = t\n\temail = t@t\n[init]\n\tdefaultBranch = main\n[advice]\n\tdetachedHead = false\n' >"$HOME/.gitconfig"
+SRC=$XDG_DATA_HOME/ritz-get/src
+LOCK=$XDG_RUNTIME_DIR/ritz-get.lock
+P=0 F=0
+
+# ---- helpers ---------------------------------------------------------------------------
+pass() { echo "PASS $1"; P=$((P + 1)); }
+bad() { echo "FAIL $1: $2"; F=$((F + 1)); }
+done_run() { RC=$?; cat "$T/out" "$T/err" >"$T/all"; }
+rg() { sh "$RG" "$@" >"$T/out" 2>"$T/err" </dev/null; done_run; }
+rge() { e=$1; shift; env "$e" sh "$RG" "$@" >"$T/out" 2>"$T/err" </dev/null; done_run; }	# rge VAR=val ARGS...
+rgi() { i=$1; shift; printf '%s\n' "$i" | sh "$RG" "$@" >"$T/out" 2>"$T/err"; done_run; }
+eq() { if [ "$2" = "$3" ]; then pass "$1"; else bad "$1" "expected [$2] got [$3]"; fi; }
+rc() { eq "$1: exit $2" "$2" "$RC"; }
+has() { if grep -qF -- "$2" "$T/all"; then pass "$1"; else bad "$1" "missing [$2] in: $(head -c 400 "$T/all" | tr '\n' '|')"; fi; }
+lacks() { if grep -qF -- "$2" "$T/all"; then bad "$1" "unexpected [$2]"; else pass "$1"; fi; }
+exists() { if [ -e "$2" ]; then pass "$1"; else bad "$1" "$2 missing"; fi; }
+gone() { if [ -e "$2" ]; then bad "$1" "$2 still exists"; else pass "$1"; fi; }
+fld() { awk -F'\t' -v n="$1" -v i="$2" '$1 == "E" && $3 == n { print $i }' "$T/out"; }	# porcelain field
+row_is() { eq "$1" "$(printf "$3")" "$(awk -F'\t' -v n="$2" '$1 == "E" && $3 == n' "$T/out")"; }
+match() { if printf '%s' "$3" | grep -Eq "$2"; then pass "$1"; else bad "$1" "[$3] !~ $2"; fi; }
+clone() { echo "$SRC/$1"; }
+sha() { git -C "$SRC/$1" rev-parse HEAD; }
+
+# mkrepo NAME: bare repo remote/t/NAME.git with a spec-style install.sh; work tree work/NAME
+cat >"$T/install.tpl" <<'EOF'
+#!/bin/sh
+# ritz-get-spec: @SPEC@
+set -eu
+cd "$(dirname "$0")"
+bin=$HOME/.local/bin
+case ${1:-} in
+--install)
+	case $(cat mode) in
+	missing) echo "missing: gcc (try: pacman:gcc dnf:gcc apt:build-essential)" >&2
+		echo "missing: pkgx (try: pacman:p1,p2 dnf:p3 apt:p4,p5)" >&2; exit 3 ;;
+	missing2) echo "missing: gcc (try: pacman:gcc dnf:gcc apt:build-essential)" >&2
+		echo "missing: noapt (try: pacman:nap)" >&2; exit 3 ;;
+	root) echo "needs root: run ritz-get install @NAME@ in a terminal" >&2; exit 4 ;;
+	fail) echo boom >&2; exit 1 ;;
+	slow) sleep 30 ;;
+	esac
+	mkdir -p "$bin"
+	ln -sfn "$(pwd -P)/@NAME@" "$bin/@NAME@"
+	echo "@NAME@ installed spec=$RITZ_GET_SPEC sudo=[$RITZ_GET_SUDO] term=$TERM nocolor=$NO_COLOR"
+	;;
+--remove)
+	if [ "$(readlink "$bin/@NAME@" 2>/dev/null)" = "$(pwd -P)/@NAME@" ]; then rm -f "$bin/@NAME@"; fi
+	echo "@NAME@" >>"$HOME/removed.log"
+	echo "@NAME@ removed"
+	;;
+*) exit 2 ;;
+esac
+EOF
+mkrepo() { # NAME [SPEC] [MODE]
+	w=$T/work/$1; mkdir -p "$w"
+	sed "s/@NAME@/$1/g; s/@SPEC@/${2:-1}/" "$T/install.tpl" >"$w/install.sh"
+	printf '#!/bin/sh\necho %s\n' "$1" >"$w/$1"
+	chmod +x "$w/install.sh" "$w/$1"
+	echo "${3:-ok}" >"$w/mode"
+	printf 'build/\n' >"$w/.gitignore"
+	(cd "$w" && git init -q -b main && git add -A && git commit -q -m v0 &&
+		git clone -q --bare . "$T/remote/t/$1.git" && git remote add origin "$T/remote/t/$1.git" &&
+		git fetch -q origin && git branch -q -u origin/main)
+}
+# newcommit NAME [MODE]: a new commit on main of the remote (optionally switching the install mode)
+newcommit() {
+	(cd "$T/work/$1" && git checkout -q main && n=$(($(cat ver 2>/dev/null || echo 0) + 1)) && echo "$n" >ver &&
+		{ [ -z "${2:-}" ] || echo "$2" >mode; } && git add -A && git commit -q -m "v$n" && git push -q origin main)
+}
+
+mkrepo alpha; mkrepo beta; mkrepo gamma 1 missing; mkrepo theta 1 missing2; mkrepo delta 1 root
+mkrepo eps 1 fail; mkrepo zeta 1 slow; mkrepo eta 2
+# ritz-get itself: the real script and install.sh
+mkdir -p "$T/work/ritz-get"
+cp "$ROOT/ritz-get" "$ROOT/install.sh" "$T/work/ritz-get/"
+(cd "$T/work/ritz-get" && git init -q -b main && git add -A && git commit -q -m v0 &&
+	git clone -q --bare . "$T/remote/t/ritz-get.git" && git remote add origin "$T/remote/t/ritz-get.git" &&
+	git fetch -q origin && git branch -q -u origin/main)
+(cd "$T/work/beta" && git checkout -q -b dev && echo d >devfile && git add -A && git commit -q -m dev &&
+	git push -q origin dev && git checkout -q main)
+
+cat >"$T/programs" <<'EOF'
+# test manifest
+alpha t/alpha "Alpha program"
+  title: Alpha Tool
+  setup: Open the app and press go
+  setup: Docs: https://example.com/x#y
+
+[Helpers]
+  # indented comment is ignored
+ritz-get t/ritz-get "ritz-get itself"
+beta t/beta "Beta helper"
+gamma t/gamma "Needs tools"
+theta t/theta "Needs other tools"
+delta t/delta "Needs root"
+eps t/eps "Fails"
+zeta t/zeta "Slow"
+eta t/eta "Spec 2"
+ghost t/ghost "Does not exist"
+
+[Websites]
+site https://example.com/page#frag "A site"
+  title: Cool Site
+EOF
+printf 'ID=cachyos\nID_LIKE=arch\n' >"$T/os-arch"; printf 'ID=fedora\n' >"$T/os-fedora"
+printf 'ID=ubuntu\nID_LIKE="debian"\n' >"$T/os-ubuntu"; printf 'ID=plan9\n' >"$T/os-other"
+
+# ---- usage -----------------------------------------------------------------------------
+rg help; rc help 0; has "help text" "usage: ritz-get"
+rg bogus; rc "unknown command" 2
+rg install; rc "install without name" 2
+rg list --nonsense; rc "unknown option" 2
+
+# ---- list: manifest grammar, porcelain, offline ----------------------------------------
+rg list --offline --porcelain; rc "list --offline --porcelain" 0
+eq "porcelain header" "#porcelain 1" "$(sed -n 1p "$T/out")"
+eq "porcelain online flag" "#online 0" "$(sed -n 2p "$T/out")"
+row_is "row: alpha (title, desc, default section)" alpha 'E\tSoftware\talpha\tAlpha Tool\tprogram\tt/alpha\toffline\t-\t0\t-\t-\t-\t-\t-\t-\tAlpha program'
+row_is "row: beta (section Helpers, title = name)" beta 'E\tHelpers\tbeta\tbeta\tprogram\tt/beta\toffline\t-\t0\t-\t-\t-\t-\t-\t-\tBeta helper'
+row_is "row: website (URL with #)" site 'E\tWebsites\tsite\tCool Site\twebsite\thttps://example.com/page#frag\twebsite\t-\t0\t-\t-\t-\t-\t-\t-\tA site'
+eq "setup lines follow their entry" "$(printf 'S\talpha\tOpen the app and press go\nS\talpha\tDocs: https://example.com/x#y')" "$(grep '^S' "$T/out")"
+eq "offline: nothing hidden" 0 "$(grep -c '^#hidden' "$T/out")"
+eq "no tab inside fields" 0 "$(awk -F'\t' '$1 == "E" && NF != 16' "$T/out" | wc -l | tr -d ' ')"
+
+rg list --porcelain; rc "list --porcelain (online)" 0
+eq "online flag" "#online 1" "$(sed -n 2p "$T/out")"
+eq "available" available "$(fld alpha 7)"
+match "latest of a not-installed program is a short sha" '^[0-9a-f]{7}$' "$(fld alpha 12)"
+eq "unreachable repo hidden" "" "$(fld ghost 7)"
+eq "hidden footer" "#hidden 1" "$(tail -n 1 "$T/out")"
+rg list --porcelain --all
+eq "--all shows unreachable" unreachable "$(fld ghost 7)"
+eq "--all: no hidden footer" 0 "$(grep -c '^#hidden' "$T/out")"
+rge RITZ_GET_GIT_BASE=file://$T/nowhere list --porcelain
+eq "ritz-get repo unreachable = offline flag" "#online 0" "$(sed -n 2p "$T/out")"
+eq "offline: not-installed state" offline "$(fld alpha 7)"
+eq "offline: nothing hidden" "offline 0" "$(fld ghost 7) $(grep -c '^#hidden' "$T/out")"
+rg list; rc "human list" 0
+has "human: section header" "Helpers"
+has "human: title shown" "Alpha Tool"
+has "human: description shown" "Alpha program"
+has "human: hidden footer" "1 program(s) hidden (no access)"
+rg list alpha
+has "list NAME: setup lines" "Additional steps required:"
+has "list NAME: setup text" "Docs: https://example.com/x#y"
+rg list nope; rc "list unknown name" 1; has "list unknown name text" "unknown program: nope"
+
+# ---- install, repair, failed first install ---------------------------------------------
+rg install alpha; rc "install alpha" 0
+has "install: setup steps printed" "Additional steps required:"
+has "install: env for install.sh" "spec=1 sudo=[] term=dumb nocolor=1"
+exists "install: link created" "$HOME/.local/bin/alpha"
+exists "install: clone exists" "$SRC/alpha/.git"
+rg list --porcelain alpha
+eq "installed state" installed "$(fld alpha 7)"
+eq "installed status" current "$(fld alpha 8)"
+eq "held 0" 0 "$(fld alpha 9)"
+eq "branch" main "$(fld alpha 10)"
+match "installed version = date + sha" '^[0-9]{4}-[0-9]{2}-[0-9]{2} [0-9a-f]{7,}$' "$(fld alpha 11)"
+eq "latest = installed when current" "$(fld alpha 11)" "$(fld alpha 12)"
+eq "behind/dirty/ahead" "0 0 0" "$(fld alpha 13) $(fld alpha 14) $(fld alpha 15)"
+rg list --porcelain --offline alpha
+eq "offline: status unknown" unknown "$(fld alpha 8)"
+eq "offline: latest/behind unknown, dirty known" "- - 0 0" "$(fld alpha 12) $(fld alpha 13) $(fld alpha 14) $(fld alpha 15)"
+rm "$HOME/.local/bin/alpha"
+rge RITZ_GET_SUDO=pkexec install alpha; rc "repair (install on installed)" 0
+has "repair message" "repairing"
+has "RITZ_GET_SUDO passes through" "sudo=[pkexec]"
+exists "repair re-creates the link" "$HOME/.local/bin/alpha"
+rg install alpha --branch dev; rc "install --branch on installed" 1; has "points to switch" "ritz-get switch alpha dev"
+
+rg install eps; rc "failed first install" 1
+has "failure trailer" "FAILED — your installed version is unchanged and still works"
+gone "failed first install deletes the clone ritz-get created" "$SRC/eps"
+has "failed first install ran --remove" "eps"; eq "remove log" eps "$(cat "$HOME/removed.log")"
+mkdir -p "$SRC/eps"; echo x >"$SRC/eps/keep"
+rg install eps; rc "install into a pre-existing folder" 1
+exists "pre-existing folder survives" "$SRC/eps/keep"
+rm -rf "$SRC/eps"
+
+rg install delta; rc "exit 4 passes through" 4; has "needs root line" "needs root: run ritz-get install delta"
+rge RITZ_GET_TIMEOUT=2 install zeta; rc "timeout" 1
+has "timeout message" "timed out after 2s"; gone "timeout: clone removed" "$SRC/zeta"
+rg install eta; rc "spec marker 2" 1; has "spec marker message" "needs a newer ritz-get"; gone "spec 2: clone removed" "$SRC/eta"
+rg install site; rc "install a website" 1
+
+# ---- exit 3: aggregated deps line ------------------------------------------------------
+rge RITZ_GET_OS_RELEASE=$T/os-arch install gamma theta; rc "missing tools" 3
+has "per-program status" "gamma: FAILED (needs: gcc, pkgx)"
+eq "pacman deps line (merged, deduped)" "deps: sudo pacman -S --needed gcc nap p1 p2" "$(grep '^deps:' "$T/out")"
+eq "one deps line" 1 "$(grep -c '^deps:' "$T/out")"
+gone "missing deps: clone removed" "$SRC/gamma"
+rge RITZ_GET_OS_RELEASE=$T/os-fedora install gamma theta
+eq "dnf deps line" "deps: sudo dnf install gcc p3" "$(grep '^deps:' "$T/out")"
+has "unmappable line stays raw" "missing: noapt (try: pacman:nap)"
+rge RITZ_GET_OS_RELEASE=$T/os-ubuntu install gamma
+eq "apt deps line (ID_LIKE)" "deps: sudo apt install build-essential p4 p5" "$(grep '^deps:' "$T/out")"
+rge RITZ_GET_OS_RELEASE=$T/os-other install gamma; rc "unknown distro" 3
+lacks "unknown distro: no deps line" "deps:"; has "unknown distro: raw missing lines" "missing: pkgx (try: pacman:p1,p2 dnf:p3 apt:p4,p5)"
+
+# ---- update ----------------------------------------------------------------------------
+rg install beta ritz-get; rc "install beta + ritz-get" 0
+rg update --yes; rc "update, nothing new" 0
+has "up to date line" "alpha: up to date"
+has "summary" "0 updated, 0 skipped, 0 failed"
+eq "last-run content" "0 updated, 0 skipped, 0 failed" "$(sed 's/^[^ ]* //' "$XDG_CACHE_HOME/ritz-get/last-run")"
+newcommit alpha
+rg update --yes; rc "update alpha" 0
+has "updated line" "alpha: updated"; has "updated shows A -> B" " -> "
+has "summary counts" "1 updated, 0 skipped, 0 failed"
+newcommit alpha
+rg update; rc "update without --yes (no tty) aborts" 0; has "aborted" "aborted"
+eq "abort left alpha behind" 1 "$(git -C "$SRC/alpha" rev-list --count 'HEAD..@{u}')"
+rg update --yes >/dev/null
+
+rg hold beta; rc "hold" 0
+eq "hold flag in the clone's git config" true "$(git -C "$SRC/beta" config --get ritz-get.hold)"
+newcommit beta
+rg update --yes; rc "update-all skips held" 0
+has "held line" "beta: held (ritz-get unhold beta)"; has "held counts as skipped" "0 updated, 1 skipped, 0 failed"
+rg list --porcelain
+eq "held in porcelain" "1 behind" "$(fld beta 9) $(fld beta 8)"
+rg update beta --yes; rc "update NAME updates a held program" 0; has "held program updated by name" "beta: updated"
+rg unhold beta; rc "unhold" 0
+eq "unhold clears it" 0 "$(git -C "$SRC/beta" config --get-all ritz-get.hold | wc -l | tr -d ' ')"
+rg hold nope; rc "hold unknown" 1
+
+mv "$T/remote/t/beta.git" "$T/remote/t/beta.gone"
+rg list --porcelain; eq "fetch-failed keeps installed visible" "installed fetch-failed" "$(fld beta 7) $(fld beta 8)"
+rg update beta --yes; rc "update with failing fetch" 1; has "fetch failed message" "beta: FAILED (fetch failed)"
+mv "$T/remote/t/beta.gone" "$T/remote/t/beta.git"
+
+before=$(sha alpha)
+newcommit alpha fail
+rg update --yes; rc "failing update" 1
+has "FAILED line" "alpha: FAILED (install.sh exit 1)"; has "failure trailer (update)" "FAILED — your installed version is unchanged and still works"
+has "failed summary" "0 updated, 0 skipped, 1 failed"
+eq "last-run lists the failed program" "failed: alpha" "$(sed -n 2p "$XDG_CACHE_HOME/ritz-get/last-run")"
+eq "failed update reverted the clone" "$before" "$(sha alpha)"
+exists "failed update keeps the link" "$HOME/.local/bin/alpha"
+newcommit alpha ok; rg update --yes; has "update recovers" "alpha: updated"; rc "recovered update" 0
+
+newcommit beta missing
+rge RITZ_GET_OS_RELEASE=$T/os-arch update --yes; rc "update exit 3" 3
+has "update needs line" "beta: FAILED (needs: gcc, pkgx)"; has "update deps line" "deps: sudo pacman -S --needed gcc p1 p2"
+newcommit beta root; rg update --yes; rc "update exit 4" 4; has "update repeats needs root" "needs root: run ritz-get install beta"
+newcommit beta ok; rg update --yes; rc "recover beta" 0
+
+(cd "$T/work/alpha" && sed -i 's/spec: 1/spec: 2/' install.sh && git commit -qam spec2 && git push -q origin main)
+before=$(sha alpha)
+rg update --yes; rc "spec-2 update is skipped, not failed" 0
+has "needs a newer ritz-get" "alpha: SKIPPED (needs a newer ritz-get)"; eq "spec-2 update reverted" "$before" "$(sha alpha)"
+(cd "$T/work/alpha" && sed -i 's/spec: 2/spec: 1/' install.sh && git commit -qam spec1 && git push -q origin main)
+rg update --yes >/dev/null
+
+# ---- self-update -----------------------------------------------------------------------
+newcommit ritz-get; newcommit alpha
+before=$(sha ritz-get)
+rg update --help; rc "update --help" 0; has "update --help prints usage" "usage: ritz-get"
+eq "update --help does not self-update" "$before" "$(sha ritz-get)"
+rg update --yes; rc "update with self-update" 0
+has "ritz-get updated first" "ritz-get: updated"; has "restart message" "updated itself, restarting"
+has "continued in the new script" "alpha: updated"; has "summary counts ritz-get" "2 updated, 0 skipped, 0 failed"
+exists "ritz-get link" "$HOME/.local/bin/ritz-get"
+
+# ---- modified: dirty, ahead, reset -----------------------------------------------------
+echo x >>"$SRC/alpha/alpha"
+newcommit alpha
+rg list --porcelain
+eq "dirty = modified (wins over behind)" "modified 1 0" "$(fld alpha 8) $(fld alpha 14) $(fld alpha 15)"
+rg update --yes; rc "update skips a dirty clone" 0
+has "modified skip line" "alpha: SKIPPED (local changes; ritz-get reset alpha to discard them)"
+rg update alpha --yes; has "also for update NAME" "alpha: SKIPPED (local changes"
+rgi n reset alpha; rc "reset declined" 0; has "reset asks what is lost" "1 changed files, 0 local commits"; has "aborted" "aborted"
+exists "declined reset keeps the edit" "$SRC/alpha/alpha"; eq "edit still there" 1 "$(git -C "$SRC/alpha" status --porcelain | wc -l | tr -d ' ')"
+rg hold alpha >/dev/null
+rg reset alpha --yes; rc "reset --yes" 0; has "reset message" "alpha: reset to main"
+eq "reset: clean again" 0 "$(git -C "$SRC/alpha" status --porcelain | wc -l | tr -d ' ')"
+eq "reset: at the remote head" "$(git -C "$T/work/alpha" rev-parse HEAD)" "$(sha alpha)"
+eq "reset clears the hold" 0 "$(git -C "$SRC/alpha" config --get-all ritz-get.hold | wc -l | tr -d ' ')"
+git -C "$SRC/alpha" commit -q --allow-empty -m local
+rg list --porcelain; eq "ahead = modified" "modified 0 1" "$(fld alpha 8) $(fld alpha 14) $(fld alpha 15)"
+newcommit alpha; rg update --yes; has "ahead skips update" "alpha: SKIPPED (local changes"
+rgi y reset alpha; rc "reset after confirmation" 0; has "prompt names local commits" "0 changed files, 1 local commits"
+eq "reset dropped the local commit" "0" "$(git -C "$SRC/alpha" rev-list --count '@{u}..HEAD')"
+touch "$SRC/alpha/marker"; newcommit alpha fail
+rg reset alpha --yes; rc "reset with failing build" 1
+exists "failed reset puts the old clone back" "$SRC/alpha/marker"; gone "no reset leftovers" "$SRC/.alpha.old"
+rm "$SRC/alpha/marker"; newcommit alpha ok; rg update --yes >/dev/null
+rg reset nope --yes; rc "reset unknown" 1
+rg reset ritz-get --yes; rc "reset ritz-get" 0; has "reset ritz-get message" "ritz-get: reset to main"
+exists "reset ritz-get: link re-created" "$HOME/.local/bin/ritz-get"; exists "reset ritz-get: clone back" "$SRC/ritz-get/ritz-get"
+
+# ---- branches, switch ------------------------------------------------------------------
+rg branches beta; rc "branches" 0
+eq "branches output" "  dev
+* main" "$(cat "$T/out")"
+rg branches nope; rc "branches unknown" 1
+rg switch beta dev; rc "switch beta dev" 0; has "switch message" "beta: now on dev"
+eq "switched" dev "$(git -C "$SRC/beta" rev-parse --abbrev-ref HEAD)"
+git -C "$SRC/beta" commit -q --allow-empty -m local-dev
+git -C "$SRC/beta" checkout -q main
+(cd "$T/work/beta" && git checkout -q dev && echo more >devfile && git commit -qam dev2 && git push -q origin dev && git checkout -q main)
+rg switch beta dev; rc "switch with diverged branch" 1
+has "ff-only failure aborts" "cannot fast-forward"
+eq "still on the old branch" main "$(git -C "$SRC/beta" rev-parse --abbrev-ref HEAD)"
+rg switch beta nonexistent; rc "switch to unknown branch" 1
+git -C "$SRC/beta" branch -q -D dev
+rg switch beta dev; rc "switch after dropping the local branch" 0
+rg switch beta main >/dev/null
+
+# ---- remove, uninstall, unlisted -------------------------------------------------------
+git clone -q "file://$T/remote/t/alpha.git" "$SRC/orphan"
+rg list --porcelain
+eq "unlisted state" "unlisted current Unlisted" "$(fld orphan 7) $(fld orphan 8) $(awk -F'\t' '$3 == "orphan" { print $2 }' "$T/out")"
+rg update orphan --yes; has "unlisted: update refused" "orphan: SKIPPED (not in the manifest"
+rg remove orphan; rc "remove an unlisted clone" 0; gone "unlisted clone deleted" "$SRC/orphan"
+rg remove alpha; rc "remove" 0; has "removed line" "alpha: removed"
+gone "remove: link gone" "$HOME/.local/bin/alpha"; gone "remove: clone gone" "$SRC/alpha"
+rg uninstall beta; rc "uninstall alias" 0; gone "uninstall: clone gone" "$SRC/beta"
+rg remove nope; rc "remove unknown" 1; has "unknown, not 'not installed'" "unknown program: nope"
+rg remove gamma; rc "remove known but not installed" 0; has "not installed" "gamma: not installed"
+rg remove ritz-get; rc "remove ritz-get refused" 1; exists "ritz-get clone kept" "$SRC/ritz-get/.git"
+rg remove; rc "remove without name" 2
+
+# ---- lock ------------------------------------------------------------------------------
+sh -c 'flock -n 9 && echo ready >"$0" && exec sleep 60' "$T/ready" 9>"$LOCK" &
+HOLD=$!
+i=0; while [ ! -e "$T/ready" ] && [ "$i" -lt 50 ]; do sleep 0.1; i=$((i + 1)); done
+rg install alpha; rc "busy: install" 5; has "busy message" "busy: another ritz-get is running"
+rg update --yes; rc "busy: update" 5
+rg hold ritz-get; rc "busy: hold" 5
+rg list --offline; rc "list takes no lock" 0
+rg branches ritz-get; rc "branches takes no lock" 0
+env -u RITZ_GET_GUI sh "$RG" update --yes </dev/null >"$T/out" 2>"$T/err"; done_run
+rc "cron (no tty, no GUI): busy update exits 0" 0
+eq "cron: silent" "" "$(cat "$T/all")"
+kill "$HOLD"; wait "$HOLD" 2>/dev/null; HOLD=
+rg update --yes; rc "lock released with the process" 0
+
+# ---- config: dir= ----------------------------------------------------------------------
+mkdir -p "$XDG_CONFIG_HOME/ritz-get"
+printf 'foo=bar\ndir=%s\nshortcuts=/nowhere\n' "$T/custom" >"$XDG_CONFIG_HOME/ritz-get/config"
+rg install alpha; rc "install into dir=" 0
+exists "dir= from the config is used" "$T/custom/alpha/.git"; gone "default folder untouched" "$SRC/alpha"
+rg remove alpha >/dev/null
+rm "$XDG_CONFIG_HOME/ritz-get/config"
+
+echo
+if [ "$F" -eq 0 ]; then echo "ALL PASS ($P checks)"; exit 0; fi
+echo "$F FAILED ($P passed)"
+exit 1
