@@ -33,9 +33,8 @@ geofinder Ritze03/geofinder "Geobingo-style multiplayer party game with real Goo
   title: Geofinder
 SteamAlt Ritze03/SteamAlt "Copy Steam game saves and settings between accounts on one PC"
   title: Steam Userdata Mover
-# gamescope-ritz stays out until its FrameGen submodule (Ritze03/frame-gen-ritz) is public; friends can't clone it.
-#gamescope-ritz Ritze03/gamescope-ritz "SteamOS session compositing window manager, with added features"
-#  title: Gamescope Ritz
+gamescope-ritz Ritze03/gamescope-ritz "SteamOS session compositing window manager, with added features"
+  title: Gamescope Ritz
 
 [Helpers]
 ritz-get Ritze03/ritz-get "Install, update and remove Ritze03's programs, built from source"
