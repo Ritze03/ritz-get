@@ -16,6 +16,7 @@
 # Optional indented lines directly under an entry:
 #   title: Display Name          at most 40 characters, shown instead of NAME
 #   setup: one manual step       at most 120 characters, shown after install; a URL becomes a link
+#   data: ~/PATH                 a folder it creates (config, cache); delete-data removes them
 #
 # Private repos stay out: other people can not clone them.
 
