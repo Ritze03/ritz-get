@@ -49,7 +49,10 @@ Always with:
 
 - **cwd** = the clone root. Do not rely on where the clone is or what its folder is called.
 - **stdin** = `/dev/null`. stdout and stderr are pipes, not a terminal; they are shown live in a
-  log pane.
+  log pane. By default a terminal run of ritz-get shows only lines starting with `missing:`,
+  `deps:`, `note:`, `restart:` or `setup:` and writes everything else to the build log
+  (`~/.cache/ritz-get/logs/NAME.log`); the GUI and `--verbose` show the full stream, so every
+  line a user must act on MUST carry one of those prefixes.
 - **user** = the normal user, never root.
 - **environment** = the user's own, plus:
   - `RITZ_GET_SPEC=1`: the spec version ritz-get speaks.
@@ -202,7 +205,10 @@ A human may also run `./install.sh --install` or `--remove` by hand, without `--
   no `\r` progress bars, no `clear`, no `tput`. Pass a no-colour option to build tools that need
   one. Keep it to about one line per step; the user reads it in a log pane. Hints SHOULD be lines
   starting with `note: `, restart hints MUST start with `restart: `. The last line on success
-  SHOULD be `NAME installed` or `NAME removed`.
+  SHOULD be `NAME installed` or `NAME removed`. By default a terminal run of ritz-get shows only
+  lines starting with `missing:`, `deps:`, `note:`, `restart:` or `setup:` and writes everything
+  else to the build log (`~/.cache/ritz-get/logs/NAME.log`); the GUI and `--verbose` show the
+  full stream, so every line a user must act on MUST carry one of those prefixes.
 
 ### 2.7 Background parts
 
