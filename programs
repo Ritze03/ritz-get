@@ -43,6 +43,8 @@ gamescope-ritz Ritze03/gamescope-ritz "SteamOS session compositing window manage
 
 [Helpers]
 ritz-get Ritze03/ritz-get "Install, update and remove Ritze03's programs, built from source"
+ritz-get-gui Ritze03/ritz-get-gui "Graphical frontend for ritz-get"
+  title: ritz-get GUI
 ccorral Ritze03/ccorral "Keeps Claude Code sessions on a few CPU cores so the desktop stays fast"
 ts6tray Ritze03/ts6tray "Tray icon, mute control and notifications for TeamSpeak 6"
   title: TeamSpeak 6 Tray
