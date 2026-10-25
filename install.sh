@@ -28,7 +28,8 @@ bin=$HOME/.local/bin
 case $mode in
 --install)
 	command -v git >/dev/null 2>&1 || { echo "missing: git (try: pacman:git dnf:git apt:git)" >&2; exit 3; }
-	if [ "$here" != "$target" ]; then
+	# RITZ_GET_INSTALL_HERE=1: link this checkout as it is (for test harnesses)
+	if [ "$here" != "$target" ] && [ -z "${RITZ_GET_INSTALL_HERE:-}" ]; then
 		echo "ritz-get installs into $target (where it updates itself); this checkout stays as it is"
 		if [ ! -e "$target/.git" ] || [ ! -f "$target/install.sh" ]; then
 			[ -z "$(ls -A "$target" 2>/dev/null)" ] || { echo "ritz-get: $target exists and is not a ritz-get clone" >&2; exit 1; }
