@@ -128,7 +128,8 @@ EOF
 		  # an implicit Vulkan layer (lsfg-vk) writes $XDG_CONFIG_HOME/lsfg-vk/conf.toml whenever Vulkan loads,
 		  # which looks like a stray config file (false R13/R22/R23 FAILs); keep that layer out of the runs
 		  VK_LOADER_LAYERS_DISABLE='*LS_frame_generation*'
-		  export VK_LOADER_LAYERS_DISABLE HOME XDG_CONFIG_HOME XDG_DATA_HOME XDG_CACHE_HOME XDG_STATE_HOME XDG_RUNTIME_DIR RITZ_GET_SPEC RITZ_GET_SUDO \
+		  RITZ_GET_INSTALL_HERE=1	# ritz-get's own install.sh would otherwise redirect into the default clone folder
+		  export RITZ_GET_INSTALL_HERE VK_LOADER_LAYERS_DISABLE HOME XDG_CONFIG_HOME XDG_DATA_HOME XDG_CACHE_HOME XDG_STATE_HOME XDG_RUNTIME_DIR RITZ_GET_SPEC RITZ_GET_SUDO \
 			NO_COLOR TERM PATH GIT_TERMINAL_PROMPT SPEC_SUDO_LOG SPEC_NAME
 		  if [ -n "$TMO" ]; then exec "$TMO" "$LIMIT" ./install.sh "$@"; else exec ./install.sh "$@"; fi
 		) </dev/null >"$T/$l.out" 2>"$T/$l.err"
