@@ -131,7 +131,7 @@ printf '[Desktop Entry]\nType=Application\nName=GUI\nExec=ritz-get-gui\n' >"$T/w
 (cd "$T/work/ritz-get-gui" && git add -A && git commit -q -m desktop && git push -q origin main)
 mkdir -p "$T/remote/Ritze03" "$T/work/rgi"
 cp "$ROOT/ritz-get" "$ROOT/install.sh" "$ROOT/programs" "$T/work/rgi/"
-printf 'ritz-get-gui t/ritz-get-gui "The GUI"\n' >>"$T/work/rgi/programs"
+sed "s#^ritz-get-gui Ritze03/ritz-get-gui \"[^\"]*\"#ritz-get-gui t/ritz-get-gui \"The GUI\"#" "$ROOT/programs" >"$T/work/rgi/programs"
 (cd "$T/work/rgi" && git init -q -b main && git add -A && git commit -q -m v0 && git clone -q --bare . "$T/remote/Ritze03/ritz-get.git")
 # xdg-open stub
 mkdir -p "$T/bin"
@@ -702,7 +702,7 @@ rg remove subby >/dev/null; gone "remove: clone with submodule deleted" "$SB"
 rge RITZ_GET_MANIFEST="$ROOT/programs" list --offline --porcelain; rc "real programs file parses" 0
 names() { awk -F'\t' '$1 == "E" { print $3 }' "$T/out" | tr '\n' ' ' | sed 's/ $//'; }
 eq "real programs: sections in order" "Software Helpers Websites Other" "$(awk -F'\t' '$1 == "E" { print $2 }' "$T/out" | uniq | tr '\n' ' ' | sed 's/ $//')"
-eq "real programs: entries" "yt-dlp-gui ritz ForzaTelemetryV3Launcher ForzaTelemetryV3 simple-screensharing geofinder SteamAlt gamescope-ritz ritz-get ccorral ts6tray cs2-alias-cycling cs2-chat-keybind cs2-multimap simple-screensharing-web walters-knaggertreff ts6-themes" "$(names)"
+eq "real programs: entries" "yt-dlp-gui ritz ForzaTelemetryV3Launcher ForzaTelemetryV3 simple-screensharing geofinder SteamAlt gamescope-ritz ritz-get ritz-get-gui ccorral ts6tray cs2-alias-cycling cs2-chat-keybind cs2-multimap simple-screensharing-web walters-knaggertreff ts6-themes" "$(names)"
 eq "real programs: ts6tray setup lines" 2 "$(awk -F'\t' '$1 == "S" && $2 == "ts6tray"' "$T/out" | wc -l | tr -d ' ')"
 eq "real programs: descriptions 1-80 chars without quote, titles <= 40" 0 "$(awk -F'\t' '$1 == "E" && (length($16) < 1 || length($16) > 80 || $16 ~ /"/ || length($4) > 40 || length($4) < 1)' "$T/out" | wc -l | tr -d ' ')"
 eq "real programs: websites have URLs" 6 "$(awk -F'\t' '$1 == "E" && $5 == "website" && $6 ~ /^https:\/\//' "$T/out" | wc -l | tr -d ' ')"
