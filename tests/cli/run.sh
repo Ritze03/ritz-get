@@ -556,6 +556,45 @@ rg dir "$SRC" --yes; rc "dir back to the default" 0; exists "default folder agai
 rg remove alpha shorty shorty2 >/dev/null; rg shortcut site --remove >/dev/null
 gone "cleanup: shortcuts gone" "$SD2"; rm -f "$XDG_CONFIG_HOME/ritz-get/config"
 
+# ---- D47: install offers the shortcut, remove takes it away ---------------------------
+# The suite runs with RITZ_GET_GUI=1; here it is unset to act like a person at a shell.
+S1=$APPS/ritz-get-shorty.desktop SW=$APPS/ritz-get-site.desktop
+rgn() { env -u RITZ_GET_GUI timeout 60 sh "$RG" "$@" >"$T/out" 2>"$T/err" </dev/null; done_run; }
+# rgt INPUT ARGS...: ritz-get on a pseudo-terminal (util-linux script), INPUT typed at it
+rgt() { i=$1; shift; printf '%s' "$i" | env -u RITZ_GET_GUI timeout 60 script -qec "sh '$RG' $*" /dev/null >"$T/out" 2>"$T/err"; done_run; }
+rgn install shorty --yes; rc "D47: install --yes" 0
+has "D47: --yes says it created the shortcut" "shorty: shortcut created ($S1)"; exists "D47: install --yes creates the shortcut" "$S1"
+lacks "D47: --yes does not ask" "start menu"
+rg remove shorty; rc "D47: remove (program)" 0; gone "D47: remove takes the program's shortcut away" "$S1"
+rgn install shorty; rc "D47: install, no tty, no --yes (does not hang)" 0
+gone "D47: no tty and no --yes: no shortcut" "$S1"; lacks "D47: no tty: nobody is asked" "start menu"
+rg remove shorty >/dev/null
+rge RITZ_GET_GUI=1 install shorty --yes; rc "D47: install under RITZ_GET_GUI=1 --yes" 0
+gone "D47: GUI=1: no shortcut" "$S1"; lacks "D47: GUI=1: no question" "start menu"; lacks "D47: GUI=1: nothing printed about a shortcut" "shortcut"
+rg remove shorty >/dev/null
+rgt 'n
+' install shorty; rc "D47: tty, answer n" 0
+has "D47: the question names the program" "Add Shorty Title to the start menu? [Y/n]"; gone "D47: answer n: no shortcut" "$S1"
+rg remove shorty >/dev/null
+rgt '
+' install shorty; rc "D47: tty, plain Enter" 0
+has "D47: Enter asked" "Add Shorty Title to the start menu? [Y/n]"; exists "D47: Enter means yes: shortcut" "$S1"
+rgt 'n
+' install shorty; rc "D47: repair with a shortcut" 0
+has "D47: repair ran" "installed, repairing"; lacks "D47: repair with a shortcut does not ask again" "start menu"; exists "D47: repair keeps the shortcut" "$S1"
+rg shortcut shorty --remove >/dev/null; newcommit shorty
+rgn update --yes shorty; rc "D47: update" 0; has "D47: update did update" "shorty: updated"
+lacks "D47: update does not ask" "start menu"; gone "D47: update adds no shortcut" "$S1"
+rgn install shorty --yes; rc "D47: repair without a shortcut, --yes" 0; exists "D47: repair offers the shortcut" "$S1"
+rgn remove shorty; rc "D47: remove (program), no GUI" 0; gone "D47: remove takes the shortcut by itself" "$S1"
+rgn install alpha --yes; rc "D47: program without NAME.desktop" 0; lacks "D47: no desktop file: no question, no shortcut" "shortcut"
+rg remove alpha >/dev/null
+rg shortcut site >/dev/null; exists "D47: website shortcut set up" "$SW"
+rg remove site; rc "D47: remove WEBSITE with a shortcut" 0; has "D47: website shortcut removed message" "site: shortcut removed"
+gone "D47: website shortcut link gone" "$SW"; gone "D47: website generated file gone" "$SRC/.ritz-get/ritz-get-site.desktop"
+rg remove site; rc "D47: remove WEBSITE without a shortcut" 0; has "D47: website without shortcut message" "site: no shortcut"
+lacks "D47: a website is not 'not installed'" "not installed"
+
 # ---- submodules ------------------------------------------------------------------------
 # ritz-get does all the git work, submodules included. Remotes are local bare repos; the test gitconfig
 # sets protocol.file.allow (ritz-get itself never does: real programs use https).

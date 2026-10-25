@@ -187,6 +187,19 @@ sc_make() {
 	mv -f "$sg.new" "$sg" && sc_link "$sg" "$SHORTDIR/ritz-get-$sn.desktop" || { WHY="cannot create $SHORTDIR/ritz-get-$sn.desktop"; return 1; }
 }
 
+# sc_offer NAME: after an install, ask whether to add the shortcut (--yes: yes; no terminal: no; the GUI asks itself)
+sc_offer() {
+	[ -z "${RITZ_GET_GUI:-}" ] && [ -f "$SRCDIR/$1/$1.desktop" ] && ! sc_has "$1" || return 0
+	if [ -z "$YES" ]; then
+		[ -t 0 ] || return 0
+		printf 'Add %s to the start menu? [Y/n] ' "$TITLE"
+		read -r a || a=n
+		case $a in ""|y|Y|yes) ;; *) return 0 ;; esac
+	fi
+	if sc_make "$1"; then sc_db; printf '%s\n' "$1: shortcut created ($SHORTDIR/ritz-get-$1.desktop)"
+	else err "$1: shortcut failed: $WHY"; fi
+}
+
 # sc_refresh NAME: regenerate an existing shortcut (its generated file holds absolute paths)
 sc_refresh() {
 	sc_has "$1" || return 0
@@ -314,6 +327,7 @@ install_one() {
 	if [ "$r" -eq 0 ]; then
 		echo "$n: installed $(branch "$n") $(short "$n")"
 		sc_refresh "$n"
+		sc_offer "$n"
 		setup_lines "$n"
 		return 0
 	fi
@@ -327,7 +341,10 @@ remove_one() {
 	valid "$n" || return 0
 	[ "$n" != ritz-get ] || { err "to remove ritz-get run: $d/install.sh --remove, then delete $d"; bump 1; return 0; }
 	if ! is_installed "$n"; then
-		if lookup "$n"; then echo "$n: not installed"; else unknown "$n"; fi
+		if ! lookup "$n"; then unknown "$n"
+		elif [ "$KIND" != website ]; then echo "$n: not installed"
+		elif sc_has "$n"; then sc_rm "$n"; sc_db; echo "$n: shortcut removed"
+		else echo "$n: no shortcut"; fi
 		return 0
 	fi
 	if [ -x "$d/install.sh" ]; then

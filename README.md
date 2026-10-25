@@ -66,7 +66,9 @@ Options: `--yes` answers "yes" to every question, `--offline` makes `list` skip 
 - `list` checks what is new on the remote; `list --offline` doesn't.
 - A program may print extra steps after installing ("Additional steps required"); do those by hand.
 - Shortcuts are flat entries in your app menu, named `ritz-get-NAME.desktop`. Only programs that
-  ship a `NAME.desktop` can have one; websites always can. `remove NAME` takes the shortcut away.
+  ship a `NAME.desktop` can have one; websites always can. `install` asks whether to add the shortcut
+  (`--yes` says yes; with no terminal to ask on, none is added; `ritz-get shortcut NAME` adds one later).
+  `remove NAME` takes the shortcut away by itself, a website's too.
 
 ## In your update script
 
