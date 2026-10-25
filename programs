@@ -26,6 +26,9 @@ ritz Ritze03/ritz "Linux Steam launch wrapper"
   title: Ritz
 ForzaTelemetryV3Launcher Ritze03/ForzaTelemetryV3Launcher "Launcher for Forza Telemetry V3: keeps it up to date, builds and runs it"
   title: Forza Telemetry V3 Launcher
+ForzaTelemetryV3 Ritze03/ForzaTelemetryV3 "Live telemetry dashboard for Forza Horizon (the app itself, no launcher)"
+  title: Forza Telemetry V3
+  setup: Hotkeys, gearbox and backfire need the input group: sudo usermod -aG input $USER, then log in again
 simple-screensharing Ritze03/simple-screensharing "Friends screensharing: native desktop client (E2E-encrypted, low latency)"
   title: Simple Screensharing
   setup: Needs PipeWire (incl. pw-loopback) and GStreamer plugins pipewire/good/bad/libav at runtime
