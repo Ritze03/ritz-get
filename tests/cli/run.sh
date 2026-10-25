@@ -57,6 +57,9 @@ case ${1:-} in
 	root) echo "needs root: run ritz-get install @NAME@ in a terminal" >&2; exit 4 ;;
 	fail) echo boom >&2; exit 1 ;;
 	slow) echo $$ >"$HOME/slow.pid"; sleep 30 ;;
+	noisy) echo "compiling @NAME@..."; echo "note: start it with: @NAME@ --daemon"
+		echo "restart: @NAME@ to use the new version" >&2; echo "setup: do the thing"; echo done ;;
+	loud) i=1; while [ $i -le 20 ]; do echo "step $i"; i=$((i + 1)); done; echo "oops" >&2; exit 1 ;;
 	esac
 	mkdir -p "$bin"
 	ln -sfn "$(pwd -P)/@NAME@" "$bin/@NAME@"
@@ -239,6 +242,8 @@ rm -rf "$SRC/eps"
 
 rg install delta; rc "exit 4 passes through" 4; has "needs root line" "needs root: run ritz-get install delta"
 rge RITZ_GET_TIMEOUT=2 install zeta; rc "timeout" 1
+env -u RITZ_GET_GUI RITZ_GET_TIMEOUT=2 sh "$RG" install zeta >"$T/out" 2>"$T/err" </dev/null; done_run; rc "quiet: timeout" 1
+has "quiet: timeout names the log" "zeta: FAILED (timed out after 2s) — build log: $XDG_CACHE_HOME/ritz-get/logs/zeta.log"
 has "timeout message" "timed out after 2s"; gone "timeout: clone removed" "$SRC/zeta"
 rg install eta; rc "spec marker 2" 1; has "spec marker message" "needs a newer ritz-get"; gone "spec 2: clone removed" "$SRC/eta"
 rg install site; rc "install a website" 1
@@ -406,21 +411,25 @@ newcommit zeta ok; rg install zeta >/dev/null; newcommit zeta slow; zold=$(sha z
 intr() {
 	rm -f "$HOME/slow.pid" "$T/irc" "$T/ipid"
 	set -m	# job control, so the background job does not start with SIGINT ignored
-	( sh -c 'echo $$ >"$1"; exec sh "$2" update zeta --yes' x "$T/ipid" "$RG" >"$T/out" 2>"$T/err" </dev/null; echo $? >"$T/irc" ) &
+	( [ -z "$IQ" ] || unset RITZ_GET_GUI; sh -c 'echo $$ >"$1"; exec sh "$2" update zeta --yes' x "$T/ipid" "$RG" >"$T/out" 2>"$T/err" </dev/null; echo $? >"$T/irc" ) &
 	set +m
 	i=0; while [ ! -s "$HOME/slow.pid" ] && [ "$i" -lt 100 ]; do sleep 0.1; i=$((i + 1)); done
 	kill -"$1" "$(cat "$T/ipid")"
 	i=0; while [ ! -s "$T/irc" ] && [ "$i" -lt 60 ]; do sleep 0.1; i=$((i + 1)); done
-	if [ -s "$T/irc" ]; then pass "$1: ritz-get exits within 6 s"; else bad "$1: ritz-get exits within 6 s" "still running"; kill -KILL "$(cat "$T/ipid")"; fi
+	if [ -s "$T/irc" ]; then pass "$IP$1: ritz-get exits within 6 s"; else bad "$IP$1: ritz-get exits within 6 s" "still running"; kill -KILL "$(cat "$T/ipid")"; fi
 	sleep 0.3; cat "$T/out" "$T/err" >"$T/all"
-	eq "$1: exit code" "$2" "$(cat "$T/irc" 2>/dev/null)"
-	has "$1: FAILED (interrupted)" "zeta: FAILED (interrupted)"; has "$1: trailer" "your installed version is unchanged"
-	eq "$1: old version still in place" "$zold" "$(sha zeta)"
-	if kill -0 "$(cat "$HOME/slow.pid")" 2>/dev/null; then bad "$1: install.sh is gone" "pid $(cat "$HOME/slow.pid") still runs"; else pass "$1: install.sh is gone"; fi
-	exists "$1: link kept" "$HOME/.local/bin/zeta"
+	eq "$IP$1: exit code" "$2" "$(cat "$T/irc" 2>/dev/null)"
+	has "$IP$1: FAILED (interrupted)" "zeta: FAILED (interrupted)"; has "$IP$1: trailer" "your installed version is unchanged"
+	eq "$IP$1: old version still in place" "$zold" "$(sha zeta)"
+	if kill -0 "$(cat "$HOME/slow.pid")" 2>/dev/null; then bad "$IP$1: install.sh is gone" "pid $(cat "$HOME/slow.pid") still runs"; else pass "$IP$1: install.sh is gone"; fi
+	exists "$IP$1: link kept" "$HOME/.local/bin/zeta"
 }
 intr INT 130
 intr TERM 143
+IQ=1 IP="quiet " # the same without RITZ_GET_GUI: the awk consumer ends with the build
+intr INT 130
+intr TERM 143
+IQ= IP=
 rg remove zeta >/dev/null; rm -f "$HOME/slow.pid"
 
 # ---- shortcuts -------------------------------------------------------------------------
@@ -831,16 +840,14 @@ rg install alpha gamma; eq "progress: GUI install of two (repair + failing build
 rgn remove alpha beta gamma >/dev/null
 rgn install alpha beta; rc "progress: no tty, no GUI: install" 0
 if grep -q '^#' "$T/out" || grep -q "$ESC" "$T/all" || [ -n "$(tr -d -c '\r' <"$T/all")" ]; then bad "progress: no tty, no GUI: install prints no marker, bar or CR" "$(head -c 300 "$T/all" | od -c | head -n 5)"; else pass "progress: no tty, no GUI: install prints no marker, bar or CR"; fi
-eq "progress: no tty, no GUI: install output is just the program lines" "alpha: cloning t/alpha
+eq "progress: no tty, no GUI: install is quiet, just the program lines (D48)" "alpha: cloning t/alpha
 alpha: building
-alpha installed spec=1 sudo=[] term=dumb nocolor=1
 alpha: installed main $(git -C "$SRC/alpha" rev-parse --short HEAD)
 Additional steps required:
   Open the app and press go
   Docs: https://example.com/x#y
 beta: cloning t/beta
 beta: building
-beta installed spec=1 sudo=[] term=dumb nocolor=1
 beta: installed main $(git -C "$SRC/beta" rev-parse --short HEAD)" "$(cat "$T/out")"
 newcommit alpha; newcommit beta
 o=$(git -C "$SRC/alpha" rev-parse --short HEAD); o2=$(git -C "$SRC/beta" rev-parse --short HEAD)
@@ -848,7 +855,7 @@ rgn update --yes alpha beta; rc "progress: no tty, no GUI: update" 0
 if grep -q '^#' "$T/out" || grep -q "$ESC" "$T/all" || [ -n "$(tr -d -c '\r' <"$T/all")" ]; then bad "progress: no tty, no GUI: update prints no marker, bar or CR" "$(head -c 300 "$T/all" | od -c | head -n 5)"; else pass "progress: no tty, no GUI: update prints no marker, bar or CR"; fi
 eq "progress: no tty, no GUI: update output is just the program lines and the summary" "alpha: updated $o -> $(git -C "$SRC/alpha" rev-parse --short HEAD)
 beta: updated $o2 -> $(git -C "$SRC/beta" rev-parse --short HEAD)
-2 updated, 0 skipped, 0 failed" "$(grep -v ' installed spec=' "$T/out")"
+2 updated, 0 skipped, 0 failed" "$(cat "$T/out")"
 # on a terminal: a bar while it works, gone again before the lines that stay
 newcommit alpha; newcommit beta
 rgb 60 C '' update --yes alpha beta; rc "progress: pty update" 0
@@ -860,7 +867,7 @@ eq "progress: pty: the last line on screen is the summary" "2 updated, 0 skipped
 eq "progress: pty: no bar is left on screen" 0 "$(screen | grep -c '^\[')"
 eq "progress: pty: the scrollback is today's lines" "alpha: updated $(git -C "$SRC/alpha" rev-parse --short HEAD~1) -> $(git -C "$SRC/alpha" rev-parse --short HEAD)
 beta: updated $(git -C "$SRC/beta" rev-parse --short HEAD~1) -> $(git -C "$SRC/beta" rev-parse --short HEAD)
-2 updated, 0 skipped, 0 failed" "$(screen | grep -v ' installed spec=' | grep -v '^$')"
+2 updated, 0 skipped, 0 failed" "$(screen | grep -v '^$')"
 newcommit alpha; newcommit beta
 rgb 60 C.UTF-8 "" update --yes alpha beta; rc "progress: pty update in UTF-8" 0
 has "progress: pty: UTF-8 locale draws blocks" "█"
@@ -877,6 +884,81 @@ narrow "progress: pty: the repair bar never reaches the last column"
 rgb 60 C '' install nonesuch; rc "progress: pty, unknown program" 1
 eq "progress: pty: no bar for a run that applies nothing" 0 "$(grep -a -c '\] 1/1' "$T/out")"
 rgn remove alpha beta >/dev/null
+
+# ---- quiet builds (D48): install.sh's output goes to a log; only what a friend must act on stays on screen ----
+mkrepo noisy 1 noisy; mkrepo loud 1 loud
+printf 'noisy t/noisy "Noisy"\nloud t/loud "Loud"\ngamma t/gamma "Needs tools"\ntheta t/theta "Needs other tools"\nalpha t/alpha "Alpha program"\n' >"$T/programs2"
+RITZ_GET_MANIFEST=$T/programs2; export RITZ_GET_MANIFEST
+LG=$XDG_CACHE_HOME/ritz-get/logs
+rgn install noisy; rc "quiet: install" 0
+eq "quiet: stdout is the program lines plus what to act on (note:, restart:, setup:)" "noisy: cloning t/noisy
+noisy: building
+note: start it with: noisy --daemon
+restart: noisy to use the new version
+setup: do the thing
+noisy: installed main $(git -C "$SRC/noisy" rev-parse --short HEAD)" "$(cat "$T/out")"
+lacks "quiet: the chatter is not on screen" "compiling noisy"
+if grep -q "$ESC" "$T/all" || [ -n "$(tr -d -c '\r' <"$T/all")" ]; then bad "quiet: no CR or ESC without a tty" "$(od -c "$T/all" | head -n 3)"; else pass "quiet: no CR or ESC without a tty"; fi
+exists "quiet: the build log exists" "$LG/noisy.log"
+eq "quiet: the log starts with a header (date, command, commit)" "# $(date +%F) " "$(head -n 1 "$LG/noisy.log" | cut -c 1-13)"
+match "quiet: the header names the command and the commit" "noisy install.sh --install --yes  $(git -C "$SRC/noisy" rev-parse --short HEAD)\$" "$(head -n 1 "$LG/noisy.log")"
+eq "quiet: the log has the chatter, stdout and stderr in order" "compiling noisy...
+note: start it with: noisy --daemon
+restart: noisy to use the new version
+setup: do the thing
+done" "$(sed -n 2,6p "$LG/noisy.log")"
+rgn install noisy; rc "quiet: repair" 0
+eq "quiet: the log is overwritten, not appended" 1 "$(grep -c '^compiling' "$LG/noisy.log")"
+rgn install loud; rc "quiet: failing build" 1
+has "quiet: FAILED line names the log" "loud: FAILED (install.sh exit 1) — build log: $LG/loud.log"
+has "quiet: the end of the log is shown, indented" "  step 20"
+has "quiet: ... including stderr" "  oops"
+has "quiet: ... 15 lines of it" "  step 7"
+lacks "quiet: ... and no more" "step 6"
+eq "quiet: nothing is streamed (the tail is the only copy)" 1 "$(grep -c 'step 20' "$T/all")"
+has "quiet: the trailer is still there" "FAILED — your installed version is unchanged and still works"
+eq "quiet: the failed first install keeps its log (cleanup does not overwrite it)" 1 "$(grep -c '^oops' "$LG/loud.log")"
+RITZ_GET_OS_RELEASE=$T/os-arch; export RITZ_GET_OS_RELEASE
+rgn install gamma theta; rc "quiet: missing tools" 3
+has "quiet: missing: lines are shown" "missing: gcc (try: pacman:gcc dnf:gcc apt:build-essential)"
+has "quiet: FAILED line as before (no log suffix for exit 3)" "gamma: FAILED (needs: gcc, pkgx)"
+lacks "quiet: exit 3 does not dump a log tail" "build log"
+eq "quiet: one deps: line, merged over both programs" "deps: sudo pacman -S --needed gcc nap p1 p2" "$(grep '^deps:' "$T/out")"
+unset RITZ_GET_OS_RELEASE
+rgn install noisy --verbose; rc "verbose: install" 0
+has "verbose: the chatter is streamed" "compiling noisy..."
+has "verbose: install.sh's own lines are streamed" "noisy installed spec=1"
+eq "verbose: the log is written too" 1 "$(grep -c '^compiling' "$LG/noisy.log")"
+rgn install noisy -v; rc "verbose: -v" 0; has "verbose: -v streams the chatter" "compiling noisy..."
+rgn install loud --verbose; rc "verbose: failing build" 1
+has "verbose: FAILED line names the log" "loud: FAILED (install.sh exit 1) — build log: $LG/loud.log"
+lacks "verbose: no extra tail (it was streamed)" "  step 20"
+rg install noisy; rc "GUI: install" 0
+has "GUI: the chatter is streamed" "compiling noisy..."
+has "GUI: the markers are there" "#start noisy"
+has "GUI: ... and #progress" "#progress noisy 1/1"
+eq "GUI: the log is written" 1 "$(grep -c '^compiling' "$LG/noisy.log")"
+rg install loud; rc "GUI: failing build" 1
+has "GUI: FAILED line is unchanged (no log suffix)" "loud: FAILED (install.sh exit 1)"
+lacks "GUI: no log path on the FAILED line" "build log"
+rgb 60 C '' install noisy; rc "quiet: pty install" 0
+has "quiet: pty: the bar is on screen through the build, one frame per output line" "noisy: building -"
+lacks "quiet: pty: the chatter is not printed" "compiling"
+eq "quiet: pty: nothing but the lines to act on is left" "noisy: installed, repairing (re-running install.sh)
+noisy: building
+note: start it with: noisy --daemon
+restart: noisy to use the new version
+setup: do the thing
+noisy: installed main $(git -C "$SRC/noisy" rev-parse --short HEAD)" "$(screen | grep -v '^$')"
+rgb 60 C '' install loud; rc "quiet: pty failing build" 1
+eq "quiet: pty failure: no bar is left" 0 "$(screen | grep -c '^\[')"
+eq "quiet: pty failure: FAILED line, log tail and trailer are on screen" "1 1 1" "$(screen | awk '/^loud: FAILED .* build log: / { a = 1 } /^  oops/ { b = 1 } /^FAILED — your/ { c = 1 } END { print a + 0, b + 0, c + 0 }')"
+rgb 60 C '' install noisy --verbose; rc "verbose: pty" 0
+has "verbose: pty: the chatter is streamed" "compiling noisy..."
+has "verbose: pty: the bar is drawn before the build as in PR 10" "] 1/1  noisy: building"
+lacks "verbose: pty: no per-line frames" "building -"
+rgn remove noisy loud >/dev/null
+RITZ_GET_MANIFEST=$T/programs; export RITZ_GET_MANIFEST
 
 # ---- config: dir= ----------------------------------------------------------------------
 mkdir -p "$XDG_CONFIG_HOME/ritz-get"

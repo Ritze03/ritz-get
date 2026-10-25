@@ -55,7 +55,12 @@ ritz-get help
 ```
 
 Options: `--yes` answers "yes" to every question, `--offline` makes `list` skip the network,
-`--all` makes `list` show programs you have no access to, `--porcelain` is for frontends.
+`--all` makes `list` show programs you have no access to, `--porcelain` is for frontends,
+`--verbose` (`-v`) shows the whole build output.
+
+- Builds are quiet: a program's `install.sh` output goes to `~/.cache/ritz-get/logs/NAME.log` (overwritten on
+  each run). On a terminal a progress bar shows through the build; lines you must act on (`missing:`, `deps:`,
+  `note:`, `restart:`, `setup:`) still print. A failed build prints the log's path and its last lines.
 
 - `update` first updates ritz-get itself and, if that changed, continues with the new version.
   It then rebuilds every installed program whose branch has new commits. A failure in one
