@@ -42,7 +42,8 @@ ritz-get list [NAME...]            # programs and websites, installed or not, up
 ritz-get install NAME...           # clone, build, install (on an installed program: repair)
 ritz-get install NAME --branch B   # same, from another branch
 ritz-get update [NAME...]          # update ritz-get, then rebuild what changed (asks first)
-ritz-get remove NAME...            # uninstall and delete the clone (alias: uninstall)
+ritz-get remove NAME...            # uninstall and delete the clone, keep its data (alias: uninstall)
+ritz-get delete-data NAME...       # delete the data of an uninstalled program (asks first; --yes)
 ritz-get branches NAME             # branches of the remote, the current one marked with *
 ritz-get switch NAME BRANCH        # check out another branch and rebuild
 ritz-get reset NAME                # throw away local changes: re-clone and rebuild
@@ -74,6 +75,9 @@ Options: `--yes` answers "yes" to every question, `--offline` makes `list` skip 
   ship a `NAME.desktop` can have one; websites always can. `install` asks whether to add the shortcut
   (`--yes` says yes; with no terminal to ask on, none is added; `ritz-get shortcut NAME` adds one later).
   `remove NAME` takes the shortcut away by itself, a website's too.
+- `remove` keeps a program's config and data and tells you where it is. `delete-data NAME` deletes
+  it, but only after the program is uninstalled and only the folders its entry in `programs` lists
+  (`data:` lines). `list` shows `data left` for an uninstalled program whose data is still there.
 
 ## In your update script
 
