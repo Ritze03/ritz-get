@@ -23,8 +23,9 @@
 yt-dlp-gui Ritze03/yt-dlp-gui "Lean Go + Gio desktop GUI for yt-dlp"
   title: yt-dlp GUI
 ritz Ritze03/ritz "Linux Steam launch wrapper"
-ForzaTelemetryV3Launcher Ritze03/ForzaTelemetryV3Launcher "Keeps ForzaTelemetryV3 up to date, builds and runs it"
-  title: Forza Telemetry V3
+  title: Ritz
+ForzaTelemetryV3Launcher Ritze03/ForzaTelemetryV3Launcher "Launcher for Forza Telemetry V3: keeps it up to date, builds and runs it"
+  title: Forza Telemetry V3 Launcher
 simple-screensharing Ritze03/simple-screensharing "Friends screensharing: native desktop client (E2E-encrypted, low latency)"
   title: Simple Screensharing
   setup: Needs PipeWire (incl. pw-loopback) and GStreamer plugins pipewire/good/bad/libav at runtime
