@@ -968,6 +968,237 @@ exists "dir= from the config is used" "$T/custom/alpha/.git"; gone "default fold
 rg remove alpha >/dev/null
 rm "$XDG_CONFIG_HOME/ritz-get/config"
 
+
+# ---- D49: data: lines, remove keeps data, delete-data ----------------------------------
+cat >"$T/pd" <<'EOF'
+alpha t/alpha "Alpha program"
+  data: ~/.config/alpha
+  data: ~/.local/share/alpha/
+  data: ~/.alpharc
+  data: /etc
+  data: ~/../x
+  data: ~
+  data: ~/.local/bin/x
+  data: ~/.config/ritz-get
+  data: ~/.config
+  data: ~/.local/share
+  data: ~/a/../b
+beta t/beta "Beta helper"
+  data: ~/.config/blink
+  data: ~/.config/viaparent/x
+  data: ~/.local/state/beta
+[Websites]
+site https://example.com/page "A site"
+  data: ~/.config/site
+EOF
+RITZ_GET_MANIFEST=$T/pd; export RITZ_GET_MANIFEST
+KEEP=$HOME/.config/alpha-sibling
+mkdir -p "$HOME/.config/alpha" "$HOME/.local/share/alpha" "$KEEP" "$HOME/.config/site"
+echo x >"$HOME/.config/alpha/f"; echo x >"$HOME/.local/share/alpha/f"; echo x >"$HOME/.alpharc"; echo x >"$KEEP/f"
+rg list --offline --porcelain --data; rc "D49: list with data: lines" 0
+for w in '"/etc"' '"~/../x"' '"~"' '"~/.local/bin/x"' '"~/.config/ritz-get"' '"~/.config"' '"~/.local/share"' '"~/a/../b"'; do
+	has "D49: bad data path warned: $w" "alpha: ignoring data path $w"
+done
+eq "D49: exactly the bad lines are warned about" 8 "$(grep -c 'ignoring data path' "$T/err")"
+eq "D49: porcelain D records: existing paths only, ~ form, KB" "$(printf 'D\talpha\t~/.config/alpha\t%s\nD\talpha\t~/.local/share/alpha\t%s\nD\talpha\t~/.alpharc\t%s' \
+	"$(du -sk "$HOME/.config/alpha" | cut -f1)" "$(du -sk "$HOME/.local/share/alpha" | cut -f1)" "$(du -sk "$HOME/.alpharc" | cut -f1)")" "$(grep '^D' "$T/out")"
+eq "D49: D records follow their E record" "E D D D" "$(awk -F'\t' '$1 == "E" && $3 == "alpha" { printf "E"; for (i = 0; i < 3; i++) { getline; printf " %s", $1 } }' "$T/out")"
+eq "D49: a website has no D records" 0 "$(grep -c '^D.site' "$T/out")"
+eq "D49: porcelain E records keep 17 fields" 0 "$(awk -F'\t' '$1 == "E" && NF != 17' "$T/out" | wc -l | tr -d ' ')"
+grep -v '^D' "$T/out" >"$T/with-data"
+rg list --offline --porcelain; rc "D49: list --porcelain without --data" 0
+eq "D49: without --data there is no D record" 0 "$(grep -c '^D' "$T/out")"
+eq "D49: without --data the output is byte-identical to the old one" "$(cat "$T/with-data")" "$(cat "$T/out")"
+printf 'alpha t/alpha "A"\n  data: ~/.config/a\tb\n  data:\t~/.config/ok\n  data: ~/.config/x\037y\n' >"$T/pd2"
+rge RITZ_GET_MANIFEST="$T/pd2" list --offline --porcelain --data
+eq "D49: a data: path with a tab (or a US) is rejected, a tab after 'data:' is not" 2 "$(grep -c 'ignoring data path' "$T/err")"
+mkdir -p "$HOME/.config/ok"; rge RITZ_GET_MANIFEST="$T/pd2" list --offline --porcelain --data; rmdir "$HOME/.config/ok"
+eq "D49: tab after 'data:' is only a separator" 1 "$(grep -c '^D.alpha.~/.config/ok.[0-9]' "$T/out")"
+rm "$HOME/.alpharc"
+rg list --offline --porcelain --data; eq "D49: a path that does not exist gets no D record" 2 "$(grep -c '^D.alpha' "$T/out")"
+rg list --offline alpha; has "D49: human list, offline: data left" "not installed (offline), data left"
+rg list alpha; has "D49: human list: data left" "not installed, data left"
+rg list beta; lacks "D49: human list: no data, no remark" "data left"
+rg install alpha >/dev/null; rg list --porcelain --data alpha
+eq "D49: porcelain: installed programs get D records too" 2 "$(grep -c '^D.alpha' "$T/out")"
+rg list alpha; lacks "D49: human list: installed, no 'data left'" "data left"
+rg delete-data alpha; rc "D49: delete-data while installed" 1
+has "D49: delete-data while installed: message" "alpha: FAILED (uninstall first: ritz-get remove alpha)"
+exists "D49: installed: data untouched" "$HOME/.config/alpha/f"
+rg remove alpha; rc "D49: remove" 0
+has "D49: remove prints the hint" "alpha: data kept in ~/.config/alpha, ~/.local/share/alpha (delete with: ritz-get delete-data alpha)"
+exists "D49: remove keeps the data" "$HOME/.config/alpha/f"; exists "D49: remove keeps the data (2)" "$HOME/.local/share/alpha/f"
+rg remove beta; lacks "D49: remove without data: no hint" "data kept"
+rg delete-data alpha; rc "D49: GUI=1, no --yes: no prompt, nothing deleted" 0
+has "D49: GUI=1: says nothing was deleted" "alpha: nothing deleted (pass --yes)"; lacks "D49: GUI=1: no question" "[y/N]"
+has "D49: GUI=1: #start line" "#start alpha"; has "D49: GUI=1: #progress line" "#progress alpha 1/1"
+rg delete-data alpha site; has "D49: GUI=1: two names, M = 2" "#progress site 2/2"
+has "D49: delete-data lists the paths with sizes" "~/.config/alpha"
+exists "D49: GUI=1 no --yes: data kept" "$HOME/.config/alpha/f"
+printf 'y\n' | RITZ_GET_GUI=1 timeout 60 script -qec "sh '$RG' delete-data alpha" /dev/null >"$T/out" 2>"$T/err"; done_run
+lacks "D49: GUI=1 on a terminal never prompts" "[y/N]"; exists "D49: GUI=1 on a terminal: nothing deleted" "$HOME/.config/alpha/f"
+rgn delete-data alpha; rc "D49: no tty, no --yes" 0
+has "D49: no tty: nothing deleted" "alpha: nothing deleted (pass --yes)"; lacks "D49: no tty: no question" "[y/N]"; exists "D49: no tty: data kept" "$HOME/.config/alpha/f"
+rgt 'n
+' delete-data alpha; rc "D49: tty, answer n" 0
+has "D49: the question" "Delete these? [y/N]"; has "D49: answer n aborts" "aborted"; exists "D49: answer n: data kept" "$HOME/.config/alpha/f"
+rgt '
+' delete-data alpha; rc "D49: tty, plain Enter = No" 0; exists "D49: Enter: data kept" "$HOME/.config/alpha/f"
+rgt 'y
+' delete-data alpha; rc "D49: tty, answer y" 0
+has "D49: answer y deletes" "alpha: data deleted"; gone "D49: y: first path gone" "$HOME/.config/alpha"; gone "D49: y: second path gone" "$HOME/.local/share/alpha"
+exists "D49: a sibling of a declared path is left alone" "$KEEP/f"
+rg delete-data alpha; rc "D49: nothing left" 0; has "D49: nothing left: message" "alpha: no data left"
+mkdir -p "$HOME/.config/alpha"; echo x >"$HOME/.alpharc"
+rg delete-data alpha --yes; rc "D49: --yes" 0; has "D49: --yes deletes" "alpha: data deleted"
+gone "D49: --yes: dir gone" "$HOME/.config/alpha"; gone "D49: --yes: file gone" "$HOME/.alpharc"; exists "D49: --yes: sibling left alone" "$KEEP/f"
+rg list --offline --porcelain --data; eq "D49: no data, no D records" 0 "$(grep -c '^D' "$T/out")"
+rg delete-data site --yes; rc "D49: website" 0; has "D49: website message" "site: a website has no data"; exists "D49: website: a data: line on it is ignored" "$HOME/.config/site"
+rg delete-data nope --yes; rc "D49: unknown name" 1; has "D49: unknown name text" "unknown program: nope"
+rg delete-data; rc "D49: no name" 2
+# symlinks and XDG mapping
+mkdir -p "$T/outside" "$T/outside2" "$HOME/xs/beta" "$HOME/.local/state/beta"
+echo x >"$T/outside/f"; echo x >"$T/outside2/x"; echo x >"$HOME/xs/beta/f"; echo x >"$HOME/.local/state/beta/f"
+ln -s "$T/outside" "$HOME/.config/blink"; ln -s "$T/outside2" "$HOME/.config/viaparent"
+rge XDG_STATE_HOME="$HOME/xs" list --porcelain --data beta; has "D49: XDG: D record keeps the ~ form" "$(printf 'D\tbeta\t~/.local/state/beta\t')"
+rge XDG_STATE_HOME="$HOME/xs" delete-data beta --yes; rc "D49: symlink out of the home: one path refused" 1
+has "D49: the refused path is named" "beta: not deleted: ~/.config/viaparent/x"
+gone "D49: a symlinked data path is removed itself" "$HOME/.config/blink"; exists "D49: ... and its target is left alone" "$T/outside/f"
+exists "D49: a path behind a symlinked parent is not followed" "$T/outside2/x"
+gone "D49: XDG_STATE_HOME is honoured for ~/.local/state" "$HOME/xs/beta"; exists "D49: ... the plain ~/.local/state is left alone" "$HOME/.local/state/beta/f"
+rm -f "$HOME/.config/viaparent"; rm -rf "$HOME/.local/state/beta"
+rg list --porcelain --data beta; eq "D49: nothing left for beta" 0 "$(grep -c '^D' "$T/out")"
+rm -rf "$HOME/xs"
+# resolved paths: nothing in ritz-get's own folders, nothing outside the real $HOME
+dd() { printf 'gamma t/gamma "G"\n  data: %s\n' "$1" >"$T/pd3"; RITZ_GET_MANIFEST=$T/pd3; }
+dd '~/stuff/clone'; ln -s "$SRC" "$HOME/stuff"; mkdir -p "$SRC/clone/k"
+rg delete-data gamma --yes; rc "D49: symlinked parent into the clone dir" 1
+has "D49: ... refused by name" "gamma: not deleted: ~/stuff/clone"; exists "D49: ... the clone dir is untouched" "$SRC/clone/k"; lacks "D49: ... no 'data deleted'" "data deleted"
+rg list --offline --porcelain --data gamma; eq "D49: ... and no D record is offered" 0 "$(grep -c '^D' "$T/out")"
+rm -rf "$HOME/stuff" "$SRC/clone"
+dd '~/lb/tool'; ln -s "$HOME/.local/bin" "$HOME/lb"; mkdir -p "$HOME/.local/bin/tool"
+rg delete-data gamma --yes; rc "D49: symlinked parent into ~/.local/bin" 1
+has "D49: ... refused" "gamma: not deleted: ~/lb/tool"; exists "D49: ... ~/.local/bin/tool untouched" "$HOME/.local/bin/tool"
+rm -rf "$HOME/lb" "$HOME/.local/bin/tool"
+dd '~/lc/cfgdir'; ln -s "$HOME/.config/ritz-get" "$HOME/lc"; mkdir -p "$HOME/.config/ritz-get/cfgdir"
+rg delete-data gamma --yes; rc "D49: symlinked parent into the config dir" 1
+has "D49: ... refused" "gamma: not deleted: ~/lc/cfgdir"; exists "D49: ... the config dir is untouched" "$HOME/.config/ritz-get/cfgdir"
+rm -rf "$HOME/lc" "$HOME/.config/ritz-get/cfgdir"
+dd '~/lk/kdir'; ln -s "$XDG_CACHE_HOME/ritz-get" "$HOME/lk"; mkdir -p "$XDG_CACHE_HOME/ritz-get/kdir"
+rg delete-data gamma --yes; rc "D49: symlinked parent into the cache dir" 1
+exists "D49: ... the cache dir is untouched" "$XDG_CACHE_HOME/ritz-get/kdir"
+rm -rf "$HOME/lk" "$XDG_CACHE_HOME/ritz-get/kdir"
+dd '~/ls'; ln -s "$HOME/.local/share" "$HOME/ls"; mkdir -p "$SRC/clone/k"
+rg list --offline --porcelain --data gamma; eq "D49: ancestor via a symlink: no D record" 0 "$(grep -c '^D' "$T/out")"
+rg list --offline gamma; lacks "D49: ... human list: no 'data left'" "data left"
+rg delete-data gamma --yes; rc "D49: ancestor via a symlink: refused" 1
+has "D49: ... refused by name" "gamma: not deleted: ~/ls"; exists "D49: ... the clone is untouched" "$SRC/clone/k"; exists "D49: ... and so is the link" "$HOME/ls"
+rm -rf "$HOME/ls" "$SRC/clone"
+# an XDG dir outside (or at, or above) the home is never used for the mapping
+Q=$T/xq; mkdir -p "$Q/root/victim" "$HOME/.config/victim"; echo x >"$HOME/.config/victim/f"; echo x >"$Q/root/victim/f"
+dd '~/.config/victim'
+rge XDG_CONFIG_HOME="$Q/root" list --offline --porcelain --data gamma
+eq "D49: XDG outside the home: the D record is the real ~/.config/victim" "$(printf 'D\tgamma\t~/.config/victim\t%s' "$(du -sk "$HOME/.config/victim" | cut -f1)")" "$(grep '^D' "$T/out")"
+rge XDG_CONFIG_HOME="$Q/root" delete-data gamma --yes; rc "D49: XDG outside the home: delete-data" 0
+exists "D49: ... the victim outside the home stays" "$Q/root/victim/f"; gone "D49: ... the one in the home is deleted" "$HOME/.config/victim"
+mkdir -p "$HOME/.config/victim"
+rge XDG_CONFIG_HOME=/ list --offline --porcelain --data gamma
+eq "D49: XDG_CONFIG_HOME=/: the D record is ~/.config/victim" "D	gamma	~/.config/victim" "$(grep '^D' "$T/out" | cut -f1-3)"
+rge XDG_CONFIG_HOME=/ delete-data gamma --yes; rc "D49: XDG_CONFIG_HOME=/: delete-data" 0; gone "D49: ... only the one in the home went" "$HOME/.config/victim"
+mkdir -p "$HOME/.ssh" "$HOME/.config/.ssh"; echo x >"$HOME/.ssh/id"; dd '~/.config/.ssh'
+rge XDG_CONFIG_HOME="$HOME" list --offline --porcelain --data gamma
+eq "D49: XDG_CONFIG_HOME=\$HOME: no mapping, the D record is ~/.config/.ssh" "D	gamma	~/.config/.ssh" "$(grep '^D' "$T/out" | cut -f1-3)"
+rge XDG_CONFIG_HOME="$HOME" delete-data gamma --yes; rc "D49: XDG_CONFIG_HOME=\$HOME: delete-data" 0
+exists "D49: ... ~/.ssh stays" "$HOME/.ssh/id"; gone "D49: ... ~/.config/.ssh went" "$HOME/.config/.ssh"
+mkdir -p "$T/victim2"; echo x >"$T/victim2/f"; dd '~/.config/victim2'
+rge XDG_CONFIG_HOME="$HOME/.." list --offline --porcelain --data gamma
+eq "D49: XDG_CONFIG_HOME=\$HOME/..: ignored, no D record" 0 "$(grep -c '^D' "$T/out")"
+rge XDG_CONFIG_HOME="$HOME/.." delete-data gamma --yes; rc "D49: XDG_CONFIG_HOME=\$HOME/..: delete-data" 0; exists "D49: ... the dir above the home stays" "$T/victim2/f"
+mkdir -p "$HOME/xc/victim3"; dd '~/.config/victim3'
+rge XDG_CONFIG_HOME="$HOME/xc" list --offline --porcelain --data gamma
+eq "D49: an XDG dir below the home still maps" "D	gamma	~/.config/victim3" "$(grep '^D' "$T/out" | cut -f1-3)"
+rge XDG_CONFIG_HOME="$HOME/xc" delete-data gamma --yes; gone "D49: ... and deletes there" "$HOME/xc/victim3"
+rm -rf "$HOME/xc" "$HOME/.ssh" "$T/victim2" "$Q"
+# the shortcuts dirs: the default applications dir (other programs' launchers live there) is never data, whatever shortcuts= says
+AP=$HOME/.local/share/applications; mkdir -p "$AP/keep"; echo x >"$AP/keep/f"
+dd '~/.local/share/applications'
+rg list --offline --porcelain --data gamma; eq "D49: the applications dir as data: no D record" 0 "$(grep -c '^D' "$T/out")"
+has "D49: ... the line is warned about" "ignoring data path \"~/.local/share/applications\""
+rg delete-data gamma --yes; lacks "D49: ... nothing deleted" "data deleted"; exists "D49: ... the other launchers survive" "$AP/keep/f"
+dd '~/.local/share/applications/keep'
+rg list --offline --porcelain --data gamma; eq "D49: a path inside the applications dir: no D record" 0 "$(grep -c '^D' "$T/out")"
+dd '~/ap'; ln -s "$AP" "$HOME/ap"
+rg delete-data gamma --yes; rc "D49: applications dir via a symlink: refused" 1
+has "D49: ... refused by name" "gamma: not deleted: ~/ap"; exists "D49: ... the launchers survive" "$AP/keep/f"; exists "D49: ... and so does the link" "$HOME/ap"
+dd '~/ap/keep'
+rg delete-data gamma --yes; rc "D49: inside the applications dir via a symlink: refused" 1; exists "D49: ... keep survives" "$AP/keep/f"
+rm -f "$HOME/ap"
+# shortcuts= elsewhere: that dir is protected as well, and the default one still is
+mkdir -p "$HOME/menu/k"; echo x >"$HOME/menu/k/f"; printf 'shortcuts=%s\n' "$HOME/menu" >"$XDG_CONFIG_HOME/ritz-get/config"
+dd '~/menu'
+rg list --offline --porcelain --data gamma; eq "D49: shortcuts= dir as data: no D record" 0 "$(grep -c '^D' "$T/out")"
+has "D49: ... warned about" "ignoring data path \"~/menu\""
+dd '~/menu/ritz-get-x.desktop'
+rg list --offline --porcelain --data gamma; eq "D49: a path inside the shortcuts= dir: no D record" 0 "$(grep -c '^D' "$T/out")"
+dd '~/.local/share/applications'
+rg list --offline --porcelain --data gamma; eq "D49: shortcuts= elsewhere: the default applications dir is still no data" 0 "$(grep -c '^D' "$T/out")"
+rg delete-data gamma --yes; exists "D49: ... its launchers survive" "$AP/keep/f"
+dd '~/mn'; ln -s "$HOME/menu" "$HOME/mn"
+rg delete-data gamma --yes; rc "D49: shortcuts= dir via a symlink: refused" 1
+has "D49: ... refused by name" "gamma: not deleted: ~/mn"; exists "D49: ... the shortcuts= dir survives" "$HOME/menu/k/f"
+dd '~/ap'; ln -s "$AP" "$HOME/ap"
+rg delete-data gamma --yes; rc "D49: shortcuts= elsewhere: the default applications dir via a symlink: refused" 1; exists "D49: ... its launchers survive" "$AP/keep/f"
+rm -rf "$HOME/mn" "$HOME/ap" "$HOME/menu" "$AP/keep"; rm -f "$XDG_CONFIG_HOME/ritz-get/config"
+# a "." in dir= is normalised: the same folder written differently is still ritz-get's
+mkdir -p "$HOME/foo/src/k"; echo x >"$HOME/foo/src/k/f"; printf 'dir=%s\n' "$HOME/foo/./src" >"$XDG_CONFIG_HOME/ritz-get/config"
+dd '~/foo/./src'
+rg list --offline --porcelain --data gamma; eq "D49: dir=~/foo/./src and data ~/foo/src: no D record" 0 "$(grep -c '^D' "$T/out")"
+has "D49: ... warned about at parse time" "ignoring data path \"~/foo/./src\""
+dd '~/fl/src'; ln -s "$HOME/foo" "$HOME/fl"
+rg delete-data gamma --yes; rc "D49: ... through a symlinked parent: refused" 1
+has "D49: ... refused by name" "gamma: not deleted: ~/fl/src"; exists "D49: ... the folder survives" "$HOME/foo/src/k/f"
+printf 'dir=%s\n' "$HOME/foo//src/" >"$XDG_CONFIG_HOME/ritz-get/config"
+rg delete-data gamma --yes; rc "D49: dir= with // and a trailing slash: refused too" 1; exists "D49: ... the folder survives too" "$HOME/foo/src/k/f"
+rm -rf "$HOME/fl" "$HOME/foo"; rm -f "$XDG_CONFIG_HOME/ritz-get/config"
+# rreal: "." and empty segments of the missing tail are dropped, ".." in it is an error
+eval "$(sed -n '/^rreal() {/,/^}/p' "$RG")"; RH=$(readlink -f "$HOME")
+eq "rreal: /./ in a missing tail is dropped" "$RH/nope/x" "$(rreal "$HOME/nope/./x")"
+eq "rreal: // and a trailing / in a missing tail are dropped" "$RH/nope/x" "$(rreal "$HOME/nope//x/")"
+eq "rreal: a ./ right after the existing part is dropped" "$RH/nope" "$(rreal "$HOME/./nope")"
+eq "rreal: nothing missing: like readlink -f" "$RH" "$(rreal "$HOME/.")"
+eq "rreal: the missing tail keeps its order" "$RH/a/b/c" "$(rreal "$HOME/a/./b/./c")"
+rreal "$HOME/nope/../x" >/dev/null; eq "rreal: .. in a missing tail: rc 1" 1 "$?"
+rreal "relative/x" >/dev/null; eq "rreal: a relative path: rc 1" 1 "$?"
+# the parent swapped for a symlink between the check and the rm (a readlink shim does it right after the second check)
+mkdir -p "$T/shim2" "$HOME/pdir/victim" "$T/outside3/victim"; echo x >"$HOME/pdir/victim/f"; echo x >"$T/outside3/victim/f"
+cat >"$T/shim2/readlink" <<'EOF'
+#!/bin/sh
+out=$("$RACE_RL" "$@"); r=$?
+printf '%s\n' "$out"
+eval "last=\${$#}"
+if [ "$last" = "$RACE_PARENT" ]; then
+	n=$(cat "$RACE_CNT" 2>/dev/null || echo 0); n=$((n + 1)); echo "$n" >"$RACE_CNT"
+	[ "$n" -ne 2 ] || { mv "$RACE_PARENT" "$RACE_PARENT.moved" && ln -s "$RACE_OUT" "$RACE_PARENT"; }
+fi
+exit "$r"
+EOF
+chmod +x "$T/shim2/readlink"
+RACE_RL=$(command -v readlink) RACE_PARENT=$HOME/pdir RACE_CNT=$T/race.cnt RACE_OUT=$T/outside3; export RACE_RL RACE_PARENT RACE_CNT RACE_OUT
+dd '~/pdir/victim'
+rge PATH="$T/shim2:$PATH" delete-data gamma --yes; rc "D49: parent swapped for a symlink before the rm: refused" 1
+has "D49: ... reported as not deleted" "gamma: not deleted: ~/pdir/victim"; lacks "D49: ... no 'data deleted'" "data deleted"
+eq "D49: ... the swap really happened" "$T/outside3" "$(readlink "$HOME/pdir")"
+exists "D49: ... the data behind the new link is untouched" "$T/outside3/victim/f"; exists "D49: ... and so is the original" "$HOME/pdir.moved/victim/f"
+unset RACE_RL RACE_PARENT RACE_CNT RACE_OUT; rm -rf "$T/shim2" "$T/race.cnt" "$HOME/pdir" "$HOME/pdir.moved" "$T/outside3"
+# the human list only needs to know that data exists: no du
+mkdir -p "$T/shim" "$HOME/.config/alpha"; echo x >"$HOME/.config/alpha/f"; RITZ_GET_MANIFEST=$T/pd
+printf '#!/bin/sh\necho "$*" >>"%s"\nexec %s "$@"\n' "$T/du.calls" "$(command -v du)" >"$T/shim/du"; chmod +x "$T/shim/du"
+rge PATH="$T/shim:$PATH" list --offline alpha; has "D49: du shim: the human list still says data left" "data left"
+eq "D49: the human list does not call du" 0 "$(cat "$T/du.calls" 2>/dev/null | wc -l | tr -d ' ')"
+rge PATH="$T/shim:$PATH" list --offline --porcelain --data alpha
+eq "D49: list --porcelain --data calls du" 1 "$([ -s "$T/du.calls" ] && echo 1 || echo 0)"
+rm -rf "$T/shim" "$T/du.calls" "$HOME/.config/alpha"
+RITZ_GET_MANIFEST=$T/programs; export RITZ_GET_MANIFEST
 echo
 if [ "$F" -eq 0 ]; then echo "ALL PASS ($P checks)"; exit 0; fi
 echo "$F FAILED ($P passed)"

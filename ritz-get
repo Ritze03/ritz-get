@@ -13,7 +13,7 @@ MYDIR=$(dirname "$(readlink -f "$0")")
 MF=${RITZ_GET_MANIFEST:-$MYDIR/programs}
 CFGF=${XDG_CONFIG_HOME:-$HOME/.config}/ritz-get/config
 CACHE=${XDG_CACHE_HOME:-$HOME/.cache}/ritz-get
-YES= BR= OFFLINE= ALL= PORC= EXPL= WANT= REMOVEF=
+YES= BR= OFFLINE= ALL= PORC= DATAF= EXPL= WANT= REMOVEF=
 EXIT=0 INTR= UP=0 SK=0 FL=0 FNAMES=
 PN= PDONE=0 PTOT=1 BAR= BARV= VERB= FLOG=	# progress: running program, programs done, programs in this run, bar enabled / drawn; --verbose; log to show on failure
 export GIT_TERMINAL_PROMPT=0 GIT_HTTP_LOW_SPEED_LIMIT=1000 GIT_HTTP_LOW_SPEED_TIME=30
@@ -36,11 +36,12 @@ usage() {
 	cat <<'USAGE'
 usage: ritz-get COMMAND [OPTIONS]
 
-  list [NAME...] [--offline] [--all] [--porcelain]
+  list [NAME...] [--offline] [--all] [--porcelain [--data]]
                                   programs, what is installed, what is behind
   install NAME... [--branch B]    clone, build and install (installed: repair)
   update [NAME...] [--yes]        update ritz-get, then rebuild programs that changed
-  remove NAME...                  uninstall and delete the clone (alias: uninstall)
+  remove NAME...                  uninstall and delete the clone, keep its data (alias: uninstall)
+  delete-data NAME... [--yes]     delete the data an uninstalled program left behind (asks first)
   branches NAME                   branches of the remote, current one marked
   switch NAME BRANCH              check out another branch and rebuild
   reset NAME [--yes]              discard local changes: re-clone and rebuild
@@ -99,23 +100,102 @@ abspath() {
 	while [ "$p" != / ] && [ "${p%/}" != "$p" ]; do p=${p%/}; done
 	printf '%s\n' "$p"
 }
+# rreal PATH: readlink -f that also works when the last components do not exist yet (".." only in the part that exists);
+# "." and empty segments of the missing tail are dropped
+rreal() {
+	rr=$1 rt=
+	case $1 in /*) ;; *) return 1 ;; esac
+	while :; do
+		while [ "$rr" != / ] && [ "${rr%/}" != "$rr" ]; do rr=${rr%/}; done
+		if [ -e "$rr" ] || [ -L "$rr" ] || [ "$rr" = / ]; then break; fi
+		rs=${rr##*/} rr=${rr%/*}; rr=${rr:-/}
+		case $rs in .|"") ;; *) rt=/$rs$rt ;; esac
+	done
+	case /$rt/ in */../*) return 1 ;; esac
+	rr=$(readlink -f -- "$rr") || return 1
+	rr=${rr%/}$rt; printf '%s\n' "${rr:-/}"
+}
+# prot_raw: the folders delete-data never touches (nor anything in or above them), one per line, unresolved: ritz-get's own
+# (clone dir, config dir, cache, data dir, ~/.local/bin) and the shortcuts dir, plus the default applications dir whichever
+# shortcuts dir is configured (other programs keep their launchers there)
+prot_raw() {
+	printf '%s\n' "$SRCDIR" "${CFGF%/*}" "$CACHE" "${XDG_DATA_HOME:-$HOME/.local/share}/ritz-get" "$HOME/.local/bin" "$SHORTDIR" \
+		"${XDG_DATA_HOME:-$HOME/.local/share}/applications" "$HOME/.local/share/applications"
+}
+# xdg_below_home VALUE: VALUE itself when it resolves to a STRICT descendant of $HOME, else nothing (the mapping ignores it)
+xdg_below_home() {
+	xh=$(readlink -f -- "$HOME") && xr=$(rreal "$1") || return 0
+	case $xr in "${xh%/}"/?*) printf '%s' "$1" ;; esac
+}
+# data_ok PATH: the REAL place of PATH (parent resolved, last name kept so a symlink is removed, not followed) is a strict
+# descendant of the real $HOME and neither equal to, inside nor above any (resolved) folder of ritz-get or shortcuts dir (prot_raw); the same for the target
+# of PATH when PATH is a symlink
+data_ok() {
+	dk_h=$(readlink -f -- "$HOME") && dk_d=$(readlink -f -- "$(dirname -- "$1")") || return 1
+	dk_r=${dk_d%/}/${1##*/}
+	case $dk_r in "${dk_h%/}"/?*) ;; *) return 1 ;; esac
+	dk_t=$dk_r; [ ! -L "$1" ] || dk_t=$(readlink -f -- "$1") || dk_t=$dk_r	# a symlink itself is only removed, but if it leads into ritz-get's folders it is refused too
+	while IFS= read -r dk_q; do
+		[ -n "$dk_q" ] || continue
+		dk_x=$(rreal "$dk_q") || dk_x=$dk_q
+		case $dk_r/ in "${dk_x%/}"/*) return 1 ;; esac
+		case ${dk_x%/}/ in "$dk_r"/*) return 1 ;; esac
+		case $dk_t/ in "${dk_x%/}"/*) return 1 ;; esac
+		case ${dk_x%/}/ in "$dk_t"/*) return 1 ;; esac
+	done <<EOF
+$(prot_raw)
+EOF
+	return 0
+}
 plural() { if [ "$1" = 1 ]; then echo "$1 $2"; else echo "$1 $2s"; fi; }
 
 # load_mf: parse the manifest into $TMP/mf, one record per line, fields joined by $US:
 #   E sec name source branch desc title      (title defaults to name)
 #   S name text                              (one per setup: line, after its E)
+#   D name ABSPATH ~/PATH                    (one per valid data: line; bad ones are warned about and dropped)
+# A data path: ~/..., no "..", XDG-mapped (~/.config -> $XDG_CONFIG_HOME ... only when that is below $HOME), never $HOME itself,
+# a bare base dir (~/.config, ~/.local, ...) or anything equal to, inside or above ritz-get's own folders or the shortcuts dirs (data_ok checks the
+# resolved path again at use).
 load_mf() {
 	[ -r "$MF" ] || die "manifest not found: $MF"
-	awk -v US="$US" '
+	prot=	# prot_raw (SHORTDIR is set before load_mf runs), each also in its resolved form
+	while IFS= read -r pq; do
+		[ -n "$pq" ] || continue
+		prot=$prot$pq$US
+		if pr=$(rreal "$pq") && [ "$pr" != "$pq" ]; then prot=$prot$pr$US; fi
+	done <<EOF
+$(prot_raw)
+EOF
+	xc=$(xdg_below_home "${XDG_CONFIG_HOME:-}") xd=$(xdg_below_home "${XDG_DATA_HOME:-}")	# an XDG dir outside (or at) $HOME is ignored
+	xk=$(xdg_below_home "${XDG_CACHE_HOME:-}") xs=$(xdg_below_home "${XDG_STATE_HOME:-}")
+	awk -v US="$US" -v home="$HOME" -v prot="$prot" -v xc="$xc" -v xd="$xd" -v xk="$xk" -v xs="$xs" '
 	function flush(   t) {
 		if (name == "") return
 		t = (title == "" ? name : title)
 		print "E" US sec US name US src US br US desc US t
-		printf "%s", setups
+		printf "%s%s", setups, datas
 		name = ""
 	}
+	function nodata(l) { print "ritz-get: manifest: " name ": ignoring data path \"" l "\" (needs ~/... below your home, outside the folders of ritz-get)" > "/dev/stderr"; return "" }
+	function dpath(l,   n, a, i, s, c, q, k, m, x, P) {
+		sub(/ +$/, "", l)
+		if (l !~ /^~\//) return nodata(l)
+		n = split(substr(l, 3), a, "/"); s = ""; c = 0
+		for (i = 1; i <= n; i++) {
+			if (a[i] == "" || a[i] == ".") continue
+			if (a[i] == "..") return nodata(l)
+			s = s (c++ ? "/" : "") a[i]
+		}
+		if (!c || s ~ /^(\.config|\.cache|\.local|\.local\/(share|state|bin))$/) return nodata(l)
+		q = home "/" s
+		m = split(".config" US ".local/share" US ".cache" US ".local/state", k, US); split(xc US xd US xk US xs, x, US)
+		for (i = 1; i <= m; i++) if (x[i] ~ /^\// && (s == k[i] || index(s, k[i] "/") == 1)) q = x[i] substr(s, length(k[i]) + 1)
+		n = split(prot, P, US)
+		for (i = 1; i <= n; i++) if (P[i] != "" && (q == P[i] || index(q "/", P[i] "/") == 1 || index(P[i] "/", q "/") == 1)) return nodata(l)
+		return (q ~ /\t/) ? nodata(l) : q US "~/" s
+	}
 	BEGIN { sec = "Software" }
-	{ sub(/\r$/, ""); gsub(/\t/, " ") }
+	{ sub(/\r$/, ""); rawl = $0; gsub(/\t/, " ") }
 	/^ *(#|$)/ { next }
 	/^\[/ { flush(); sec = $0; sub(/^\[/, "", sec); sub(/\] *$/, "", sec); next }
 	/^ / {
@@ -123,6 +203,7 @@ load_mf() {
 		if (name == "") next
 		if (l ~ /^title:/ && title == "") { sub(/^title: */, "", l); title = l }
 		else if (l ~ /^setup:/) { sub(/^setup: */, "", l); setups = setups "S" US name US l "\n" }
+		else if (l ~ /^data:/ && src !~ /^https?:/) { sub(/^data: */, "", l); p = rawl; sub(/^[ \t]*data:[ \t]*/, "", p); sub(/[ \t]+$/, "", p); l = (p ~ /\t/ || index(p, US)) ? nodata(l) : dpath(l); if (l != "") datas = datas "D" US name US l "\n" }
 		next
 	}
 	{
@@ -131,7 +212,7 @@ load_mf() {
 		if (match(r, /"[^"]*"/)) { d = substr(r, RSTART + 1, RLENGTH - 2); r = substr(r, 1, RSTART - 1) }
 		n = split(r, f, " ")
 		if (n < 2 || f[1] !~ /^[A-Za-z0-9][A-Za-z0-9._-]*$/) next
-		name = f[1]; src = f[2]; br = (n > 2 ? f[3] : ""); desc = d; title = ""; setups = ""
+		name = f[1]; src = f[2]; br = (n > 2 ? f[3] : ""); desc = d; title = ""; setups = ""; datas = ""
 	}
 	END { flush() }' "$MF" >"$TMP/mf"
 }
@@ -148,6 +229,22 @@ EOF
 
 setup_lines() {
 	awk -F"$US" -v n="$1" '$1=="S" && $2==n { if (!s++) print "Additional steps required:"; print "  " $3 }' "$TMP/mf"
+}
+
+# data_have NAME [raw]: "PATH<US>~/PATH" of each declared data path that exists (D records of the manifest) and passes data_ok;
+# raw: without the data_ok test
+data_have() {
+	awk -F"$US" -v n="$1" '$1 == "D" && $2 == n { print $3 FS $4 }' "$TMP/mf" | while IFS=$US read -r p t; do
+		if [ -e "$p" ] || [ -L "$p" ]; then
+			[ -n "${2:-}" ] || data_ok "$p" || continue
+			printf '%s%s%s\n' "$p" "$US" "$t"
+		fi
+	done
+}
+kb() { k=$(du -sk -- "$1" 2>/dev/null | cut -f1); echo "${k:--}"; }
+data_hint() {
+	dh=$(data_have "$1" | awk -F"$US" '{ s = s (s ? ", " : "") $2 } END { print s }')
+	[ -z "$dh" ] || echo "$1: data kept in $dh (delete with: ritz-get delete-data $1)"
 }
 
 # ---- clone state -----------------------------------------------------------------------
@@ -413,7 +510,7 @@ remove_one() {
 	fi
 	if sc_has "$n"; then sc_rm "$n"; sc_db; fi
 	dp=$(cd "$d" 2>/dev/null && pwd -P) lk=$HOME/.local/bin/$n
-	rm -rf "${d:?}" && echo "$n: removed"
+	rm -rf "${d:?}" && { echo "$n: removed"; data_hint "$n"; }
 	if [ -L "$lk" ]; then case $(readlink "$lk") in "$d"/*|"${dp:-$d}"/*) rm -f "$lk" ;; esac; fi	# no dangling link
 }
 
@@ -490,6 +587,7 @@ cmd_list() {
 			fi ;;
 		esac
 		awk -F"$US" -v n="$n" '$1 == "S" && $2 == n { print "S\t" n "\t" $3 }' "$TMP/mf" >>"$TMP/rows"
+		if [ -z "$PORC" ] || [ -n "$DATAF" ]; then data_have "$n" | while IFS=$US read -r p t; do printf 'D\t%s\t%s\t%s\n' "$n" "$t" "$(if [ -n "$PORC" ]; then kb "$p"; else echo -; fi)"; done >>"$TMP/rows"; fi
 	done <"$TMP/mf"
 	while read -r n; do
 		want "$n" || continue
@@ -504,6 +602,7 @@ cmd_list() {
 	fi
 	awk -F'\t' -v detail="${WANT:+1}" '
 	function pl(n, w) { return n " " w (n == 1 ? "" : "s") }
+	FNR == NR { if ($1 == "D") dl[$2] = 1; next }
 	$1 == "E" {
 		if ($2 != sec) { if (sec != "") print ""; print $2; sec = $2 }
 		h = 0; st = $8; s = ""
@@ -520,12 +619,13 @@ cmd_list() {
 		else if ($7 == "available") s = "not installed"
 		else if ($7 == "offline") s = "not installed (offline)"
 		else s = "no access"
+		if ($7 !~ /^(installed|unlisted|website)$/ && ($3 in dl)) s = s ", data left"
 		printf "  %-22s %-22s %s\n", $3, $4, s
 		if ($16 != "") print "      " $16
 		if (detail) print "      source: " $6
 		if (detail && $17 != "-") print "      shortcut: " $17
 	}
-	$1 == "S" && detail { if (!h++) print "      Additional steps required:"; print "        " $3 }' "$TMP/rows"
+	$1 == "S" && detail { if (!h++) print "      Additional steps required:"; print "        " $3 }' "$TMP/rows" "$TMP/rows"
 	[ "$HIDDEN" -eq 0 ] || echo "$HIDDEN program(s) hidden (no access)"
 	[ -z "$OFF" ] || echo "offline: not checking for updates"
 	return 0
@@ -627,6 +727,48 @@ cmd_install() {
 cmd_remove() {
 	[ $# -gt 0 ] || usage_err "remove: no program given"
 	for n; do remove_one "$n"; [ -z "$INTR" ] || break; done
+}
+
+# delete_one NAME: list the declared data that exists, ask (--yes: yes; no terminal or RITZ_GET_GUI: no), delete it
+delete_one() {
+	n=$1
+	valid "$n" || return 0
+	lookup "$n" || { unknown "$n"; return 0; }
+	[ "$KIND" != website ] || { echo "$n: a website has no data"; return 0; }
+	! is_installed "$n" || { failed "$n" "uninstall first: ritz-get remove $n"; return 0; }
+	have=$(data_have "$n" raw)
+	[ -n "$have" ] || { echo "$n: no data left"; return 0; }
+	ok=1 safe=
+	while IFS=$US read -r p t; do	# only real places strictly below $HOME that are not ritz-get's own; refused ones are named
+		if data_ok "$p"; then safe=${safe:+$safe
+}$p$US$t; else err "$n: not deleted: $t"; ok=; bump 1; fi
+	done <<EOF
+$have
+EOF
+	have=$safe
+	[ -n "$have" ] || return 0
+	while IFS=$US read -r p t; do printf '  %s\t%s\n' "$(du -sh -- "$p" 2>/dev/null | cut -f1)" "$t"; done <<EOF
+$have
+EOF
+	if [ -z "$YES" ]; then
+		[ -z "${RITZ_GET_GUI:-}" ] && [ -t 0 ] || { echo "$n: nothing deleted (pass --yes)"; return 0; }
+		printf 'Delete these? [y/N] '
+		read -r a || a=
+		case $a in y|Y|yes) ;; *) echo aborted; return 0 ;; esac
+	fi
+	while IFS=$US read -r p t; do	# checked again right before rm; a symlink is removed, never followed
+		# rm runs inside the parent data_ok resolved (dk_d): if that parent was swapped for a symlink meanwhile, nothing is removed
+		if data_ok "$p" && (cd -P -- "$dk_d" && [ "$(pwd -P)" = "$dk_d" ] && rm -rf -- "./${p##*/}"); then :; else err "$n: not deleted: $t"; ok=; bump 1; fi
+	done <<EOF
+$have
+EOF
+	[ -z "$ok" ] || echo "$n: data deleted"
+}
+
+cmd_delete_data() {
+	[ $# -gt 0 ] || usage_err "delete-data: no program given"
+	PTOT=$#
+	for n; do prog_begin "$n"; delete_one "$n"; [ -z "$INTR" ] || break; done
 }
 
 cmd_branches() {
@@ -818,6 +960,7 @@ main() {
 		--offline) OFFLINE=1 ;;
 		--all) ALL=1 ;;
 		--porcelain) PORC=1 ;;
+		--data) DATAF=1 ;;
 		--remove) REMOVEF=1 ;;
 		--branch|-b) [ $# -gt 0 ] || usage_err "$a needs a branch"; BR=$1; shift; n=$((n - 1)) ;;
 		-h|--help) cmd=help ;;
@@ -829,6 +972,7 @@ main() {
 	help|-h|--help) usage; exit 0 ;;
 	list|install|update|remove|branches|switch|reset|hold|unhold|open|shortcut|shortcuts|dir) ;;
 	uninstall) cmd=remove ;;
+	delete-data) cmd=delete_data ;;
 	*) usage >&2; exit 2 ;;
 	esac
 
@@ -845,7 +989,7 @@ main() {
 	trap 'exit 1' INT TERM HUP
 	load_mf
 	case $cmd in
-	install|update|remove|switch|reset|hold|unhold|shortcut)
+	install|update|remove|delete_data|switch|reset|hold|unhold|shortcut)
 		[ -n "${RITZ_GET_SELF_UPDATED:-}" ] || lock ;;	# after a self-update exec the fd is inherited
 	esac
 	# RITZ_GET_SUDO for install.sh: passed through if set (the GUI sets pkexec), else sudo on a terminal

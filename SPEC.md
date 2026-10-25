@@ -162,7 +162,9 @@ A human may also run `./install.sh --install` or `--remove` by hand, without `--
 - **R22** `--remove` MUST delete every path that `--install` created outside the clone. It MUST
   delete a path only if it is a symlink pointing into this clone (check with `readlink`; the
   template's `unlink_ours` does). It MUST NOT delete configuration or user data, even data the
-  program created at runtime.
+  program created at runtime. ritz-get's `delete-data` deletes the `data:` paths the manifest
+  declares (section 6); program authors list there every folder their program creates outside
+  the clone.
 - **R23** `--remove` MUST exit 0 when the program is not installed, or only partly installed.
 - **R24** `--remove` MUST NOT build anything and MUST NOT need a build tool or the network. It
   need not clean `build/`; ritz-get deletes the clone afterwards.
@@ -567,6 +569,7 @@ do not edit it. You **send** your entry in your final reply. It looks like this:
 ts6tray  Ritze03/ts6tray  "Tray icon and mute control for TeamSpeak 6"
   title: TS6 Tray
   setup: In TeamSpeak: Settings -> Remote Apps -> enable, port 5899
+  data: ~/.config/ts6tray
 ```
 
 ### Grammar
@@ -581,6 +584,7 @@ The file is read line by line. Fields are separated by spaces or tabs.
 | entry | `NAME OWNER/REPO [BRANCH] "DESC"` at column 0 | one program |
 | title | indented `title: TEXT` | at most one, directly under its entry |
 | setup | indented `setup: TEXT` | any number, directly under its entry; order is kept |
+| data | indented `data: ~/PATH` | any number, one path each, directly under its entry; programs only |
 
 - `NAME`: `[A-Za-z0-9][A-Za-z0-9._-]*`, unique in the file. It is the folder, the command
   `~/.local/bin/NAME`, `NAME.desktop` and the icon file name. SHOULD equal the GitHub repo name.
@@ -595,6 +599,16 @@ The file is read line by line. Fields are separated by spaces or tabs.
 - `setup:` plain text, at most **120** characters per line; a URL in it becomes a link. Use it for
   manual steps `install.sh` must not automate (R37), such as "enable remote apps in TeamSpeak".
   Send none if there are none. Never use it for build dependencies; exit 3 covers those.
+- `data:` one folder or file the program creates outside the clone (config, data, cache), written
+  `~/PATH`. `ritz-get delete-data NAME` deletes exactly these, after the program is uninstalled, and
+  `list` shows `data left` while they exist. It lives in the manifest because the manifest is still
+  there after the clone is gone. Only paths below `~/` count: a line with `..`, a bare `~`, or a path
+  that is, contains or lies inside ritz-get's own folders or `~/.local/bin` is ignored with a
+  warning. `~/.config/`, `~/.local/share/`, `~/.cache/` and `~/.local/state/` follow
+  `$XDG_CONFIG_HOME`, `$XDG_DATA_HOME`, `$XDG_CACHE_HOME` and `$XDG_STATE_HOME`, but only when that
+  variable points below `$HOME`; ritz-get also checks the resolved path (symlinks followed) and refuses
+  anything outside `$HOME` or touching its own folders. List every such
+  folder, and nothing broader than your program's own. Send none if there are none.
 - Website entries (a URL instead of `OWNER/REPO`): the icon is `icons/NAME.png` in the ritz-get repo
   (NAME = the entry name); frontends fall back to a letter tile without it.
 - Section: pick `[Software]` (apps with a window you open), `[Helpers]` (background tools, tray
@@ -703,7 +717,7 @@ Not covered by the script. Read your `install.sh` and your diff once more:
   README.
 - Merging is the maintainer's decision, unless your task says you may merge once the check passes.
 - Your final reply contains the manifest entry of section 6: section, entry line, `title:`,
-  `setup:` lines.
+  `setup:` lines, and `data:` lines.
 
 ---
 
