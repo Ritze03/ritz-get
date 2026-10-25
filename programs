@@ -33,7 +33,7 @@ simple-screensharing Ritze03/simple-screensharing "Friends screensharing: native
 geofinder Ritze03/geofinder "Geobingo-style multiplayer party game with real Google and Apple Maps"
   title: Geofinder
 SteamAlt Ritze03/SteamAlt "Copy Steam game saves and settings between accounts on one PC"
-  title: Steam Userdata Mover
+  title: Steam Userdata Copier
 gamescope-ritz Ritze03/gamescope-ritz "SteamOS session compositing window manager, with added features"
   title: Gamescope Ritz
   setup: Ritz users: copy its Ritz module by hand, see https://github.com/Ritze03/gamescope-ritz#quick-start

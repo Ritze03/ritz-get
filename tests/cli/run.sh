@@ -707,7 +707,7 @@ eq "real programs: ts6tray setup lines" 2 "$(awk -F'\t' '$1 == "S" && $2 == "ts6
 eq "real programs: descriptions 1-80 chars without quote, titles <= 40" 0 "$(awk -F'\t' '$1 == "E" && (length($16) < 1 || length($16) > 80 || $16 ~ /"/ || length($4) > 40 || length($4) < 1)' "$T/out" | wc -l | tr -d ' ')"
 eq "real programs: websites have URLs" 6 "$(awk -F'\t' '$1 == "E" && $5 == "website" && $6 ~ /^https:\/\//' "$T/out" | wc -l | tr -d ' ')"
 eq "Software entries" "yt-dlp-gui ritz ForzaTelemetryV3Launcher simple-screensharing geofinder SteamAlt gamescope-ritz" "$(awk -F'\t' '$1 == "E" && $2 == "Software" { print $3 }' "$T/out" | tr '\n' ' ' | sed 's/ $//')"
-eq "SteamAlt title" "Steam Userdata Mover" "$(fld SteamAlt 4)"
+eq "SteamAlt title" "Steam Userdata Copier" "$(fld SteamAlt 4)"
 eq "Software entries: valid description and title" 0 "$(awk -F'\t' '$1 == "E" && (length($16) < 1 || length($16) > 80 || $16 ~ /"/ || length($4) > 40)' "$T/out" | wc -l | tr -d ' ')"
 
 # ---- the one-time installer ------------------------------------------------------------
