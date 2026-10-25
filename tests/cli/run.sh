@@ -785,6 +785,99 @@ ln -sfn /nowhere/ritz-get "$T/ihf/.local/bin/ritz-get"
 inst "$T/ihf" RITZ_GET_DIR="$T/ihf/c"; rc "installer, link pointing elsewhere" 0
 eq "elsewhere: link restored" "$T/ihf/c/ritz-get/ritz-get" "$(readlink "$T/ihf/.local/bin/ritz-get")"
 
+# ---- progress: #start/#progress for the GUI, a bar on a terminal, nothing extra anywhere else -------
+# before A B: A is printed on an earlier line than B (stdout)
+before() { eq "$1" 1 "$(awk -v a="$2" -v b="$3" 'index($0, a) == 1 && !x { x = NR } index($0, b) == 1 { y = NR } END { print (x && y && x < y) ? 1 : 0 }' "$T/out")"; }
+# rgb COLS LOCALE INPUT ARGS...: ritz-get on a pty with a terminal type, so the bar is on
+rgb() { w=$1 l=$2 i=$3; shift 3; printf '%s' "$i" | env -u RITZ_GET_GUI TERM=xterm COLUMNS="$w" LC_ALL="$l" timeout 60 script -qec "sh '$RG' $*" /dev/null >"$T/out" 2>"$T/err"; done_run; }
+# screen: what a terminal would show of $T/out (a line ends at the last CR; ESC[K erases)
+screen() { awk '{ sub(/\r$/, ""); n = split($0, a, "\r"); s = a[n]; gsub(/\033\[K/, "", s); print s }' "$T/out"; }
+ESC=$(printf '\033')
+rg remove alpha beta >/dev/null
+rg install alpha; rc "progress: GUI install" 0
+eq "progress: GUI install: the marker lines are exactly #start and #progress 1/1" "#start alpha
+#progress alpha 1/1" "$(grep '^#' "$T/out")"
+eq "progress: GUI install: #start is the first line" "#start alpha" "$(head -n 1 "$T/out")"
+before "progress: GUI install: #start comes before the result line" "#start alpha" "alpha: installed"
+before "progress: GUI install: #progress comes after the result line" "alpha: installed" "#progress alpha 1/1"
+rg remove alpha; lacks "progress: remove has no markers" "#start"
+rg install alpha beta >/dev/null; newcommit alpha; newcommit beta
+rg update --yes alpha beta; rc "progress: GUI update of two" 0
+eq "progress: GUI update: N/M runs 1/2, 2/2 over the apply list, in order" "#start alpha
+#progress alpha 1/2
+#start beta
+#progress beta 2/2" "$(grep '^#' "$T/out")"
+before "progress: GUI update: alpha's result sits between its markers" "#start alpha" "alpha: updated"
+before "progress: GUI update: alpha is done before beta starts" "#progress alpha 1/2" "#start beta"
+before "progress: GUI update: beta's result comes before its #progress" "beta: updated" "#progress beta 2/2"
+before "progress: GUI update: markers come before the summary" "#progress beta 2/2" "2 updated, 0 skipped, 0 failed"
+newcommit alpha
+rg update --yes alpha beta; rc "progress: GUI update, one up to date" 0
+eq "progress: GUI update: M counts only what is applied" "#start alpha
+#progress alpha 1/1" "$(grep '^#' "$T/out")"
+has "progress: GUI update: the up-to-date program is still reported" "beta: up to date"
+rg update --yes alpha beta; eq "progress: GUI update, nothing to do: no markers" "" "$(grep '^#' "$T/out")"
+rg switch beta dev; rc "progress: GUI switch" 0
+eq "progress: GUI switch: 1/1" "#start beta
+#progress beta 1/1" "$(grep '^#' "$T/out")"
+rg reset beta --yes; rc "progress: GUI reset" 0
+eq "progress: GUI reset: 1/1" "#start beta
+#progress beta 1/1" "$(grep '^#' "$T/out")"
+rg install alpha gamma; eq "progress: GUI install of two (repair + failing build): 1/2, 2/2" "#start alpha
+#progress alpha 1/2
+#start gamma
+#progress gamma 2/2" "$(grep '^#' "$T/out")"
+# not a terminal, not the GUI: nothing but today's lines (cron, pipes, ritz-get update --yes >log)
+rgn remove alpha beta gamma >/dev/null
+rgn install alpha beta; rc "progress: no tty, no GUI: install" 0
+if grep -q '^#' "$T/out" || grep -q "$ESC" "$T/all" || [ -n "$(tr -d -c '\r' <"$T/all")" ]; then bad "progress: no tty, no GUI: install prints no marker, bar or CR" "$(head -c 300 "$T/all" | od -c | head -n 5)"; else pass "progress: no tty, no GUI: install prints no marker, bar or CR"; fi
+eq "progress: no tty, no GUI: install output is just the program lines" "alpha: cloning t/alpha
+alpha: building
+alpha installed spec=1 sudo=[] term=dumb nocolor=1
+alpha: installed main $(git -C "$SRC/alpha" rev-parse --short HEAD)
+Additional steps required:
+  Open the app and press go
+  Docs: https://example.com/x#y
+beta: cloning t/beta
+beta: building
+beta installed spec=1 sudo=[] term=dumb nocolor=1
+beta: installed main $(git -C "$SRC/beta" rev-parse --short HEAD)" "$(cat "$T/out")"
+newcommit alpha; newcommit beta
+o=$(git -C "$SRC/alpha" rev-parse --short HEAD); o2=$(git -C "$SRC/beta" rev-parse --short HEAD)
+rgn update --yes alpha beta; rc "progress: no tty, no GUI: update" 0
+if grep -q '^#' "$T/out" || grep -q "$ESC" "$T/all" || [ -n "$(tr -d -c '\r' <"$T/all")" ]; then bad "progress: no tty, no GUI: update prints no marker, bar or CR" "$(head -c 300 "$T/all" | od -c | head -n 5)"; else pass "progress: no tty, no GUI: update prints no marker, bar or CR"; fi
+eq "progress: no tty, no GUI: update output is just the program lines and the summary" "alpha: updated $o -> $(git -C "$SRC/alpha" rev-parse --short HEAD)
+beta: updated $o2 -> $(git -C "$SRC/beta" rev-parse --short HEAD)
+2 updated, 0 skipped, 0 failed" "$(grep -v ' installed spec=' "$T/out")"
+# on a terminal: a bar while it works, gone again before the lines that stay
+newcommit alpha; newcommit beta
+rgb 60 C '' update --yes alpha beta; rc "progress: pty update" 0
+has "progress: pty: the bar shows 1/2 with the name and step" "] 1/2  alpha: building"
+has "progress: pty: the bar shows 2/2" "] 2/2  beta: building"
+has "progress: pty: the bar is plain ASCII in the C locale" "[--"
+lacks "progress: pty: no GUI markers" "#start"
+eq "progress: pty: the last line on screen is the summary" "2 updated, 0 skipped, 0 failed" "$(screen | grep -v '^$' | tail -n 1)"
+eq "progress: pty: no bar is left on screen" 0 "$(screen | grep -c '^\[')"
+eq "progress: pty: the scrollback is today's lines" "alpha: updated $(git -C "$SRC/alpha" rev-parse --short HEAD~1) -> $(git -C "$SRC/alpha" rev-parse --short HEAD)
+beta: updated $(git -C "$SRC/beta" rev-parse --short HEAD~1) -> $(git -C "$SRC/beta" rev-parse --short HEAD)
+2 updated, 0 skipped, 0 failed" "$(screen | grep -v ' installed spec=' | grep -v '^$')"
+newcommit alpha; newcommit beta
+rgb 60 C.UTF-8 "" update --yes alpha beta; rc "progress: pty update in UTF-8" 0
+has "progress: pty: UTF-8 locale draws blocks" "█"
+rgb 60 C.UTF-8 "" reset alpha --yes; rc "progress: pty reset in UTF-8" 0
+has "progress: pty: UTF-8 bar has the empty part too" "░"
+has "progress: pty: reset shows the cloning step" "1/1  alpha: cloning"
+eq "progress: pty: reset leaves no bar" 0 "$(screen | grep -c '^\[')"
+newcommit alpha
+narrow() { eq "$1" "0 1" "$(tr "\r" "\n" <"$T/out" | grep -a "^${ESC}\[K\[" | awk 'length($0) - 3 > 21 { n++ } END { print n + 0, (NR > 0) }')"; }
+rgb 22 C "" update --yes alpha; rc "progress: pty on a narrow terminal" 0
+narrow "progress: pty: the update bar never reaches the last column"
+rgb 22 C '' install alpha; rc "progress: pty repair on a narrow terminal" 0
+narrow "progress: pty: the repair bar never reaches the last column"
+rgb 60 C '' install nonesuch; rc "progress: pty, unknown program" 1
+eq "progress: pty: no bar for a run that applies nothing" 0 "$(grep -a -c '\] 1/1' "$T/out")"
+rgn remove alpha beta >/dev/null
+
 # ---- config: dir= ----------------------------------------------------------------------
 mkdir -p "$XDG_CONFIG_HOME/ritz-get"
 printf 'foo=bar\ndir=%s\nshortcuts=/nowhere\n' "$T/custom" >"$XDG_CONFIG_HOME/ritz-get/config"

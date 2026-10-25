@@ -111,7 +111,10 @@ Git submodules are fine: ritz-get keeps them in sync on every install, update, s
 ## For frontends
 
 `ritz-get list --porcelain` is a stable, tab-separated format for GUIs and scripts. It and the
-exit codes are described in [PORCELAIN.md](PORCELAIN.md).
+exit codes are described in [PORCELAIN.md](PORCELAIN.md), and so are the `#start` / `#progress`
+lines a frontend gets (under `RITZ_GET_GUI=1`) while programs install or update. On a terminal,
+install, update, switch and reset show a one-line progress bar while ritz-get is cloning or
+fetching; piped or cron output is unchanged.
 
 ## License
 

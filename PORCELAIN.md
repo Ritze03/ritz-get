@@ -66,6 +66,20 @@ If several programs fail, 3 beats 4 beats 1.
 - Every failed build, update, switch or reset is followed by the line `FAILED — your installed version is unchanged and still works` (true: the clone is reverted).
 - `update` ends with `N updated, N skipped, N failed`. `ritz-get install` prints `Additional steps required:` followed by indented setup lines after a successful install.
 
+## Progress lines (`RITZ_GET_GUI` set only)
+
+`install`, `update`, `switch` and `reset` print two machine lines per program on stdout, both starting with `#`:
+
+```
+#start NAME            <- just before NAME's apply step begins
+#progress NAME N/M     <- after NAME's result lines: N programs done of M in this run
+```
+
+- `#start` comes before the program's own lines (`NAME: cloning ...`, `NAME: building`, install.sh output), `#progress` after its result line (`NAME: installed ...`, `NAME: updated A -> B`, `NAME: FAILED (...)`, `NAME: SKIPPED (...)`), also when it failed or was skipped. `install` with a name that is unknown or invalid still gets the pair, around the error line.
+- M is the apply list of the run: for `install NAME...` the number of names; for `update` only the programs that are actually updated (phase 2, after all the phase-1 checks, so programs that are up to date, held or skipped are not counted); 1 for `switch` and `reset`. N counts 1..M in order. `update` that updates ritz-get itself and other programs does it in two steps and counts each step on its own (`1/1`, then `1/M`).
+- Both lines appear only under `RITZ_GET_GUI=1`. Without it (a pipe, cron, a terminal) they are never printed; a terminal gets a progress bar instead, which is not part of this contract.
+- Readers must ignore unknown lines that start with `#`, like the `#porcelain` header lines of `list --porcelain`, and fall back to guessing from the human lines when a run prints none of these.
+
 ## `${XDG_CACHE_HOME:-~/.cache}/ritz-get/last-run`
 
 Written by every `update` run (cache, not state):
