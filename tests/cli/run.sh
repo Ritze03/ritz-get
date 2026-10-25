@@ -1057,17 +1057,76 @@ rg delete-data site --yes; rc "D49: website" 0; has "D49: website message" "site
 rg delete-data nope --yes; rc "D49: unknown name" 1; has "D49: unknown name text" "unknown program: nope"
 rg delete-data; rc "D49: no name" 2
 # symlinks and XDG mapping
-mkdir -p "$T/outside" "$T/outside2" "$T/xs/beta" "$HOME/.local/state/beta"
-echo x >"$T/outside/f"; echo x >"$T/outside2/x"; echo x >"$T/xs/beta/f"; echo x >"$HOME/.local/state/beta/f"
+mkdir -p "$T/outside" "$T/outside2" "$HOME/xs/beta" "$HOME/.local/state/beta"
+echo x >"$T/outside/f"; echo x >"$T/outside2/x"; echo x >"$HOME/xs/beta/f"; echo x >"$HOME/.local/state/beta/f"
 ln -s "$T/outside" "$HOME/.config/blink"; ln -s "$T/outside2" "$HOME/.config/viaparent"
-rge XDG_STATE_HOME="$T/xs" list --porcelain --data beta; has "D49: XDG: D record keeps the ~ form" "$(printf 'D\tbeta\t~/.local/state/beta\t')"
-rge XDG_STATE_HOME="$T/xs" delete-data beta --yes; rc "D49: symlink out of the home: one path refused" 1
+rge XDG_STATE_HOME="$HOME/xs" list --porcelain --data beta; has "D49: XDG: D record keeps the ~ form" "$(printf 'D\tbeta\t~/.local/state/beta\t')"
+rge XDG_STATE_HOME="$HOME/xs" delete-data beta --yes; rc "D49: symlink out of the home: one path refused" 1
 has "D49: the refused path is named" "beta: not deleted: ~/.config/viaparent/x"
 gone "D49: a symlinked data path is removed itself" "$HOME/.config/blink"; exists "D49: ... and its target is left alone" "$T/outside/f"
 exists "D49: a path behind a symlinked parent is not followed" "$T/outside2/x"
-gone "D49: XDG_STATE_HOME is honoured for ~/.local/state" "$T/xs/beta"; exists "D49: ... the plain ~/.local/state is left alone" "$HOME/.local/state/beta/f"
+gone "D49: XDG_STATE_HOME is honoured for ~/.local/state" "$HOME/xs/beta"; exists "D49: ... the plain ~/.local/state is left alone" "$HOME/.local/state/beta/f"
 rm -f "$HOME/.config/viaparent"; rm -rf "$HOME/.local/state/beta"
 rg list --porcelain --data beta; eq "D49: nothing left for beta" 0 "$(grep -c '^D' "$T/out")"
+rm -rf "$HOME/xs"
+# resolved paths: nothing in ritz-get's own folders, nothing outside the real $HOME
+dd() { printf 'gamma t/gamma "G"\n  data: %s\n' "$1" >"$T/pd3"; RITZ_GET_MANIFEST=$T/pd3; }
+dd '~/stuff/clone'; ln -s "$SRC" "$HOME/stuff"; mkdir -p "$SRC/clone/k"
+rg delete-data gamma --yes; rc "D49: symlinked parent into the clone dir" 1
+has "D49: ... refused by name" "gamma: not deleted: ~/stuff/clone"; exists "D49: ... the clone dir is untouched" "$SRC/clone/k"; lacks "D49: ... no 'data deleted'" "data deleted"
+rg list --offline --porcelain --data gamma; eq "D49: ... and no D record is offered" 0 "$(grep -c '^D' "$T/out")"
+rm -rf "$HOME/stuff" "$SRC/clone"
+dd '~/lb/tool'; ln -s "$HOME/.local/bin" "$HOME/lb"; mkdir -p "$HOME/.local/bin/tool"
+rg delete-data gamma --yes; rc "D49: symlinked parent into ~/.local/bin" 1
+has "D49: ... refused" "gamma: not deleted: ~/lb/tool"; exists "D49: ... ~/.local/bin/tool untouched" "$HOME/.local/bin/tool"
+rm -rf "$HOME/lb" "$HOME/.local/bin/tool"
+dd '~/lc/cfgdir'; ln -s "$HOME/.config/ritz-get" "$HOME/lc"; mkdir -p "$HOME/.config/ritz-get/cfgdir"
+rg delete-data gamma --yes; rc "D49: symlinked parent into the config dir" 1
+has "D49: ... refused" "gamma: not deleted: ~/lc/cfgdir"; exists "D49: ... the config dir is untouched" "$HOME/.config/ritz-get/cfgdir"
+rm -rf "$HOME/lc" "$HOME/.config/ritz-get/cfgdir"
+dd '~/lk/kdir'; ln -s "$XDG_CACHE_HOME/ritz-get" "$HOME/lk"; mkdir -p "$XDG_CACHE_HOME/ritz-get/kdir"
+rg delete-data gamma --yes; rc "D49: symlinked parent into the cache dir" 1
+exists "D49: ... the cache dir is untouched" "$XDG_CACHE_HOME/ritz-get/kdir"
+rm -rf "$HOME/lk" "$XDG_CACHE_HOME/ritz-get/kdir"
+dd '~/ls'; ln -s "$HOME/.local/share" "$HOME/ls"; mkdir -p "$SRC/clone/k"
+rg list --offline --porcelain --data gamma; eq "D49: ancestor via a symlink: no D record" 0 "$(grep -c '^D' "$T/out")"
+rg list --offline gamma; lacks "D49: ... human list: no 'data left'" "data left"
+rg delete-data gamma --yes; rc "D49: ancestor via a symlink: refused" 1
+has "D49: ... refused by name" "gamma: not deleted: ~/ls"; exists "D49: ... the clone is untouched" "$SRC/clone/k"; exists "D49: ... and so is the link" "$HOME/ls"
+rm -rf "$HOME/ls" "$SRC/clone"
+# an XDG dir outside (or at, or above) the home is never used for the mapping
+Q=$T/xq; mkdir -p "$Q/root/victim" "$HOME/.config/victim"; echo x >"$HOME/.config/victim/f"; echo x >"$Q/root/victim/f"
+dd '~/.config/victim'
+rge XDG_CONFIG_HOME="$Q/root" list --offline --porcelain --data gamma
+eq "D49: XDG outside the home: the D record is the real ~/.config/victim" "$(printf 'D\tgamma\t~/.config/victim\t%s' "$(du -sk "$HOME/.config/victim" | cut -f1)")" "$(grep '^D' "$T/out")"
+rge XDG_CONFIG_HOME="$Q/root" delete-data gamma --yes; rc "D49: XDG outside the home: delete-data" 0
+exists "D49: ... the victim outside the home stays" "$Q/root/victim/f"; gone "D49: ... the one in the home is deleted" "$HOME/.config/victim"
+mkdir -p "$HOME/.config/victim"
+rge XDG_CONFIG_HOME=/ list --offline --porcelain --data gamma
+eq "D49: XDG_CONFIG_HOME=/: the D record is ~/.config/victim" "D	gamma	~/.config/victim" "$(grep '^D' "$T/out" | cut -f1-3)"
+rge XDG_CONFIG_HOME=/ delete-data gamma --yes; rc "D49: XDG_CONFIG_HOME=/: delete-data" 0; gone "D49: ... only the one in the home went" "$HOME/.config/victim"
+mkdir -p "$HOME/.ssh" "$HOME/.config/.ssh"; echo x >"$HOME/.ssh/id"; dd '~/.config/.ssh'
+rge XDG_CONFIG_HOME="$HOME" list --offline --porcelain --data gamma
+eq "D49: XDG_CONFIG_HOME=\$HOME: no mapping, the D record is ~/.config/.ssh" "D	gamma	~/.config/.ssh" "$(grep '^D' "$T/out" | cut -f1-3)"
+rge XDG_CONFIG_HOME="$HOME" delete-data gamma --yes; rc "D49: XDG_CONFIG_HOME=\$HOME: delete-data" 0
+exists "D49: ... ~/.ssh stays" "$HOME/.ssh/id"; gone "D49: ... ~/.config/.ssh went" "$HOME/.config/.ssh"
+mkdir -p "$T/victim2"; echo x >"$T/victim2/f"; dd '~/.config/victim2'
+rge XDG_CONFIG_HOME="$HOME/.." list --offline --porcelain --data gamma
+eq "D49: XDG_CONFIG_HOME=\$HOME/..: ignored, no D record" 0 "$(grep -c '^D' "$T/out")"
+rge XDG_CONFIG_HOME="$HOME/.." delete-data gamma --yes; rc "D49: XDG_CONFIG_HOME=\$HOME/..: delete-data" 0; exists "D49: ... the dir above the home stays" "$T/victim2/f"
+mkdir -p "$HOME/xc/victim3"; dd '~/.config/victim3'
+rge XDG_CONFIG_HOME="$HOME/xc" list --offline --porcelain --data gamma
+eq "D49: an XDG dir below the home still maps" "D	gamma	~/.config/victim3" "$(grep '^D' "$T/out" | cut -f1-3)"
+rge XDG_CONFIG_HOME="$HOME/xc" delete-data gamma --yes; gone "D49: ... and deletes there" "$HOME/xc/victim3"
+rm -rf "$HOME/xc" "$HOME/.ssh" "$T/victim2" "$Q"
+# the human list only needs to know that data exists: no du
+mkdir -p "$T/shim" "$HOME/.config/alpha"; echo x >"$HOME/.config/alpha/f"; RITZ_GET_MANIFEST=$T/pd
+printf '#!/bin/sh\necho "$*" >>"%s"\nexec %s "$@"\n' "$T/du.calls" "$(command -v du)" >"$T/shim/du"; chmod +x "$T/shim/du"
+rge PATH="$T/shim:$PATH" list --offline alpha; has "D49: du shim: the human list still says data left" "data left"
+eq "D49: the human list does not call du" 0 "$(cat "$T/du.calls" 2>/dev/null | wc -l | tr -d ' ')"
+rge PATH="$T/shim:$PATH" list --offline --porcelain --data alpha
+eq "D49: list --porcelain --data calls du" 1 "$([ -s "$T/du.calls" ] && echo 1 || echo 0)"
+rm -rf "$T/shim" "$T/du.calls" "$HOME/.config/alpha"
 RITZ_GET_MANIFEST=$T/programs; export RITZ_GET_MANIFEST
 echo
 if [ "$F" -eq 0 ]; then echo "ALL PASS ($P checks)"; exit 0; fi

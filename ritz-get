@@ -100,19 +100,52 @@ abspath() {
 	while [ "$p" != / ] && [ "${p%/}" != "$p" ]; do p=${p%/}; done
 	printf '%s\n' "$p"
 }
+# rreal PATH: readlink -f that also works when the last components do not exist yet (".." only in the part that exists)
+rreal() {
+	rr=$1 rt=
+	case $1 in /*) ;; *) return 1 ;; esac
+	while [ ! -e "$rr" ] && [ ! -L "$rr" ] && [ "$rr" != / ]; do rt=/${rr##*/}$rt; rr=$(dirname -- "$rr"); done
+	case /$rt/ in */../*) return 1 ;; esac
+	rr=$(readlink -f -- "$rr") || return 1
+	rr=${rr%/}$rt; printf '%s\n' "${rr:-/}"
+}
+# xdg_below_home VALUE: VALUE itself when it resolves to a STRICT descendant of $HOME, else nothing (the mapping ignores it)
+xdg_below_home() {
+	xh=$(readlink -f -- "$HOME") && xr=$(rreal "$1") || return 0
+	case $xr in "${xh%/}"/?*) printf '%s' "$1" ;; esac
+}
+# data_ok PATH: the REAL place of PATH (parent resolved, last name kept so a symlink is removed, not followed) is a strict
+# descendant of the real $HOME and neither equal to, inside nor above any (resolved) folder of ritz-get; the same for the target
+# of PATH when PATH is a symlink
+data_ok() {
+	dk_h=$(readlink -f -- "$HOME") && dk_d=$(readlink -f -- "$(dirname -- "$1")") || return 1
+	dk_r=${dk_d%/}/${1##*/}
+	case $dk_r in "${dk_h%/}"/?*) ;; *) return 1 ;; esac
+	dk_t=$dk_r; [ ! -L "$1" ] || dk_t=$(readlink -f -- "$1") || dk_t=$dk_r	# a symlink itself is only removed, but if it leads into ritz-get's folders it is refused too
+	for dk_q in "$SRCDIR" "${CFGF%/*}" "$CACHE" "${XDG_DATA_HOME:-$HOME/.local/share}/ritz-get" "$HOME/.local/bin"; do
+		dk_x=$(rreal "$dk_q") || dk_x=$dk_q
+		case $dk_r/ in "${dk_x%/}"/*) return 1 ;; esac
+		case ${dk_x%/}/ in "$dk_r"/*) return 1 ;; esac
+		case $dk_t/ in "${dk_x%/}"/*) return 1 ;; esac
+		case ${dk_x%/}/ in "$dk_t"/*) return 1 ;; esac
+	done
+	return 0
+}
 plural() { if [ "$1" = 1 ]; then echo "$1 $2"; else echo "$1 $2s"; fi; }
 
 # load_mf: parse the manifest into $TMP/mf, one record per line, fields joined by $US:
 #   E sec name source branch desc title      (title defaults to name)
 #   S name text                              (one per setup: line, after its E)
 #   D name ABSPATH ~/PATH                    (one per valid data: line; bad ones are warned about and dropped)
-# A data path: ~/..., no "..", XDG-mapped (~/.config -> $XDG_CONFIG_HOME ...), never $HOME itself, a bare base dir
-# (~/.config, ~/.local, ...) or anything equal to, inside or above ritz-get's own folders.
+# A data path: ~/..., no "..", XDG-mapped (~/.config -> $XDG_CONFIG_HOME ... only when that is below $HOME), never $HOME itself,
+# a bare base dir (~/.config, ~/.local, ...) or anything equal to, inside or above ritz-get's own folders (data_ok checks the
+# resolved path again at use).
 load_mf() {
 	[ -r "$MF" ] || die "manifest not found: $MF"
 	prot="$SRCDIR$US${CFGF%/*}$US$CACHE$US${XDG_DATA_HOME:-$HOME/.local/share}/ritz-get$US$HOME/.local/bin"
-	awk -v US="$US" -v home="$HOME" -v prot="$prot" -v xc="${XDG_CONFIG_HOME:-}" -v xd="${XDG_DATA_HOME:-}" \
-		-v xk="${XDG_CACHE_HOME:-}" -v xs="${XDG_STATE_HOME:-}" '
+	xc=$(xdg_below_home "${XDG_CONFIG_HOME:-}") xd=$(xdg_below_home "${XDG_DATA_HOME:-}")	# an XDG dir outside (or at) $HOME is ignored
+	xk=$(xdg_below_home "${XDG_CACHE_HOME:-}") xs=$(xdg_below_home "${XDG_STATE_HOME:-}")
+	awk -v US="$US" -v home="$HOME" -v prot="$prot" -v xc="$xc" -v xd="$xd" -v xk="$xk" -v xs="$xs" '
 	function flush(   t) {
 		if (name == "") return
 		t = (title == "" ? name : title)
@@ -175,10 +208,14 @@ setup_lines() {
 	awk -F"$US" -v n="$1" '$1=="S" && $2==n { if (!s++) print "Additional steps required:"; print "  " $3 }' "$TMP/mf"
 }
 
-# data_have NAME: "PATH<US>~/PATH" of each declared data path that exists (D records of the manifest)
+# data_have NAME [raw]: "PATH<US>~/PATH" of each declared data path that exists (D records of the manifest) and passes data_ok;
+# raw: without the data_ok test
 data_have() {
 	awk -F"$US" -v n="$1" '$1 == "D" && $2 == n { print $3 FS $4 }' "$TMP/mf" | while IFS=$US read -r p t; do
-		if [ -e "$p" ] || [ -L "$p" ]; then printf '%s%s%s\n' "$p" "$US" "$t"; fi
+		if [ -e "$p" ] || [ -L "$p" ]; then
+			[ -n "${2:-}" ] || data_ok "$p" || continue
+			printf '%s%s%s\n' "$p" "$US" "$t"
+		fi
 	done
 }
 kb() { k=$(du -sk -- "$1" 2>/dev/null | cut -f1); echo "${k:--}"; }
@@ -527,7 +564,7 @@ cmd_list() {
 			fi ;;
 		esac
 		awk -F"$US" -v n="$n" '$1 == "S" && $2 == n { print "S\t" n "\t" $3 }' "$TMP/mf" >>"$TMP/rows"
-		if [ -z "$PORC" ] || [ -n "$DATAF" ]; then data_have "$n" | while IFS=$US read -r p t; do printf 'D\t%s\t%s\t%s\n' "$n" "$t" "$(kb "$p")"; done >>"$TMP/rows"; fi
+		if [ -z "$PORC" ] || [ -n "$DATAF" ]; then data_have "$n" | while IFS=$US read -r p t; do printf 'D\t%s\t%s\t%s\n' "$n" "$t" "$(if [ -n "$PORC" ]; then kb "$p"; else echo -; fi)"; done >>"$TMP/rows"; fi
 	done <"$TMP/mf"
 	while read -r n; do
 		want "$n" || continue
@@ -676,8 +713,17 @@ delete_one() {
 	lookup "$n" || { unknown "$n"; return 0; }
 	[ "$KIND" != website ] || { echo "$n: a website has no data"; return 0; }
 	! is_installed "$n" || { failed "$n" "uninstall first: ritz-get remove $n"; return 0; }
-	have=$(data_have "$n")
+	have=$(data_have "$n" raw)
 	[ -n "$have" ] || { echo "$n: no data left"; return 0; }
+	ok=1 safe=
+	while IFS=$US read -r p t; do	# only real places strictly below $HOME that are not ritz-get's own; refused ones are named
+		if data_ok "$p"; then safe=${safe:+$safe
+}$p$US$t; else err "$n: not deleted: $t"; ok=; bump 1; fi
+	done <<EOF
+$have
+EOF
+	have=$safe
+	[ -n "$have" ] || return 0
 	while IFS=$US read -r p t; do printf '  %s\t%s\n' "$(du -sh -- "$p" 2>/dev/null | cut -f1)" "$t"; done <<EOF
 $have
 EOF
@@ -687,13 +733,8 @@ EOF
 		read -r a || a=
 		case $a in y|Y|yes) ;; *) echo aborted; return 0 ;; esac
 	fi
-	ok=1
-	while IFS=$US read -r p t; do	# only below $HOME (or an XDG base dir); a symlink is removed, never followed
-		dr=$(readlink -f "$(dirname "$p")") inh=
-		for r in "$HOME" "${XDG_CONFIG_HOME:-}" "${XDG_DATA_HOME:-}" "${XDG_CACHE_HOME:-}" "${XDG_STATE_HOME:-}"; do
-			[ -z "$r" ] || case $dr/ in "$(readlink -f "$r")"/*) inh=1 ;; esac
-		done
-		if [ -n "$inh" ] && rm -rf -- "$p"; then :; else err "$n: not deleted: $t"; ok=; bump 1; fi
+	while IFS=$US read -r p t; do	# checked again right before rm; a symlink is removed, never followed
+		if data_ok "$p" && rm -rf -- "$p"; then :; else err "$n: not deleted: $t"; ok=; bump 1; fi
 	done <<EOF
 $have
 EOF
