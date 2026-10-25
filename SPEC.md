@@ -589,6 +589,8 @@ The file is read line by line. Fields are separated by spaces or tabs.
 - `setup:` plain text, at most **120** characters per line; a URL in it becomes a link. Use it for
   manual steps `install.sh` must not automate (R37), such as "enable remote apps in TeamSpeak".
   Send none if there are none. Never use it for build dependencies; exit 3 covers those.
+- Website entries (a URL instead of `OWNER/REPO`): the icon is `icons/NAME.png` in the ritz-get repo
+  (NAME = the entry name); frontends fall back to a letter tile without it.
 - Section: pick `[Software]` (apps with a window you open), `[Helpers]` (background tools, tray
   apps, CLIs) or `[Other]`. Only the maintainer creates sections; if none fits, say so.
 
