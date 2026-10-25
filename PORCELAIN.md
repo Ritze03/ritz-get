@@ -64,7 +64,22 @@ If several programs fail, 3 beats 4 beats 1.
 - `busy: another ritz-get is running` (stderr, exit 5). Changing commands (install, update, remove, switch, reset, hold, unhold, shortcut, shortcuts PATH, dir PATH) take one non-blocking lock; `list` and `branches` take none. `update` from cron (no tty, no `RITZ_GET_GUI`) exits 0 silently instead.
 - Per program in `install`/`update`/`switch`/`reset`: `NAME: up to date`, `NAME: updated A -> B`, `NAME: held (ritz-get unhold NAME)`, `NAME: SKIPPED (local changes; ritz-get reset NAME to discard them)`, `NAME: SKIPPED (needs a newer ritz-get)`, `NAME: FAILED (reason)`. Reasons include `needs: a, b` (exit 3), `timed out after 60 min`, `fetch failed`, `install.sh exit N`.
 - Every failed build, update, switch or reset is followed by the line `FAILED — your installed version is unchanged and still works` (true: the clone is reverted).
+- Build log: each run of a program's install.sh (install, update, remove, ...) is also written to `${XDG_CACHE_HOME:-~/.cache}/ritz-get/logs/NAME.log` (stdout and stderr, overwritten per run, first line `# DATE NAME install.sh ARG --yes COMMIT`). With `RITZ_GET_GUI` set the full output still streams live, stdout and stderr apart; a plain terminal run is quiet and prints only `missing:`, `deps:`, `note:`, `restart:` and `setup:` lines, unless `--verbose`.
 - `update` ends with `N updated, N skipped, N failed`. `ritz-get install` prints `Additional steps required:` followed by indented setup lines after a successful install.
+
+## Progress lines (`RITZ_GET_GUI` set only)
+
+`install`, `update`, `switch` and `reset` print two machine lines per program on stdout, both starting with `#`:
+
+```
+#start NAME            <- just before NAME's apply step begins
+#progress NAME N/M     <- after NAME's result lines: N programs done of M in this run
+```
+
+- `#start` comes before the program's own lines (`NAME: cloning ...`, `NAME: building`, install.sh output), `#progress` after its result line (`NAME: installed ...`, `NAME: updated A -> B`, `NAME: FAILED (...)`, `NAME: SKIPPED (...)`), also when it failed or was skipped. `install` with a name that is unknown or invalid still gets the pair, around the error line.
+- M is the apply list of the run: for `install NAME...` the number of names; for `update` only the programs that are actually updated (phase 2, after all the phase-1 checks, so programs that are up to date, held or skipped are not counted); 1 for `switch` and `reset`. N counts 1..M in order. `update` that updates ritz-get itself and other programs does it in two steps and counts each step on its own (`1/1`, then `1/M`).
+- Both lines appear only under `RITZ_GET_GUI=1`. Without it (a pipe, cron, a terminal) they are never printed; a terminal gets a progress bar instead, which is not part of this contract.
+- Readers must ignore unknown lines that start with `#`, like the `#porcelain` header lines of `list --porcelain`, and fall back to guessing from the human lines when a run prints none of these.
 
 ## `${XDG_CACHE_HOME:-~/.cache}/ritz-get/last-run`
 

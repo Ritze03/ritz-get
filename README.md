@@ -55,7 +55,12 @@ ritz-get help
 ```
 
 Options: `--yes` answers "yes" to every question, `--offline` makes `list` skip the network,
-`--all` makes `list` show programs you have no access to, `--porcelain` is for frontends.
+`--all` makes `list` show programs you have no access to, `--porcelain` is for frontends,
+`--verbose` (`-v`) shows the whole build output.
+
+- Builds are quiet: a program's `install.sh` output goes to `~/.cache/ritz-get/logs/NAME.log` (overwritten on
+  each run). On a terminal a progress bar shows through the build; lines you must act on (`missing:`, `deps:`,
+  `note:`, `restart:`, `setup:`) still print. A failed build prints the log's path and its last lines.
 
 - `update` first updates ritz-get itself and, if that changed, continues with the new version.
   It then rebuilds every installed program whose branch has new commits. A failure in one
@@ -111,7 +116,10 @@ Git submodules are fine: ritz-get keeps them in sync on every install, update, s
 ## For frontends
 
 `ritz-get list --porcelain` is a stable, tab-separated format for GUIs and scripts. It and the
-exit codes are described in [PORCELAIN.md](PORCELAIN.md).
+exit codes are described in [PORCELAIN.md](PORCELAIN.md), and so are the `#start` / `#progress`
+lines a frontend gets (under `RITZ_GET_GUI=1`) while programs install or update. On a terminal,
+install, update, switch and reset show a one-line progress bar while ritz-get is cloning or
+fetching; piped or cron output is unchanged.
 
 ## License
 

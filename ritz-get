@@ -15,14 +15,19 @@ CFGF=${XDG_CONFIG_HOME:-$HOME/.config}/ritz-get/config
 CACHE=${XDG_CACHE_HOME:-$HOME/.cache}/ritz-get
 YES= BR= OFFLINE= ALL= PORC= EXPL= WANT= REMOVEF=
 EXIT=0 INTR= UP=0 SK=0 FL=0 FNAMES=
+PN= PDONE=0 PTOT=1 BAR= BARV= VERB= FLOG=	# progress: running program, programs done, programs in this run, bar enabled / drawn; --verbose; log to show on failure
 export GIT_TERMINAL_PROMPT=0 GIT_HTTP_LOW_SPEED_LIMIT=1000 GIT_HTTP_LOW_SPEED_TIME=30
 
-err() { printf '%s\n' "ritz-get: $*" >&2; }
+err() { unbar; printf '%s\n' "ritz-get: $*" >&2; }
 die() { err "$*"; exit 1; }
 usage_err() { err "$*"; exit 2; }
 # bump KIND: remember the worst exit code (3 beats 4 beats 1)
 bump() { case $1 in 3) EXIT=3 ;; 4) [ "$EXIT" = 3 ] || EXIT=4 ;; *) [ "$EXIT" != 0 ] || EXIT=$1 ;; esac; }
-failed() { printf '%s\n' "$1: FAILED ($2)"; FL=$((FL + 1)); FNAMES="$FNAMES $1"; bump "${3:-1}"; }
+failed() { # failed NAME WHY [EXIT]; after a build: where its log is, and (quiet) the end of it
+	[ -z "${RITZ_GET_GUI:-}" ] || FLOG=	# the GUI's contract has no log suffix
+	unbar; printf '%s\n' "$1: FAILED ($2)${FLOG:+ — build log: $FLOG}"
+	[ -z "$FLOG" ] || [ -n "$VERB" ] || tail -n 15 "$FLOG" | sed 's/^/  /'
+	FLOG=; FL=$((FL + 1)); FNAMES="$FNAMES $1"; bump "${3:-1}"; }
 fail() { failed "$@"; echo "FAILED — your installed version is unchanged and still works"; }
 unknown() { err "unknown program: $1 (see: ritz-get list)"; bump 1; }
 valid() { case $1 in ""|[!A-Za-z0-9]*|*[!A-Za-z0-9._-]*) err "invalid program name: $1"; bump 1; return 1 ;; esac; }
@@ -45,7 +50,39 @@ usage: ritz-get COMMAND [OPTIONS]
   shortcuts [PATH]                show, or move, the folder the shortcuts live in
   dir [PATH] [--yes]              show, or move, the folder the programs are cloned into
   help
+
+  --verbose, -v   show the whole build output (it always goes to ~/.cache/ritz-get/logs/NAME.log)
 USAGE
+}
+
+# ---- progress --------------------------------------------------------------------------
+# GUI (RITZ_GET_GUI): "#start NAME" / "#progress NAME DONE/TOTAL" lines. Terminal: a bar on the current line, unbar before
+# any other output; during a quiet build run_script's awk keeps it on screen. Pipes and cron: nothing.
+BARAWK='function bar(s,   w, k, r, x, a, l) {
+	w = int(c / 4); if (w > 20) w = 20; r = ""
+	for (k = 0; k < w; k++) r = r (k < int(w * d / t) ? f : e)
+	x = d + 1 "/" t; l = pn ": " s; a = c - 1 - w - length(x) - 5
+	if (length(l) > a) l = (a > 3 ? substr(l, 1, a - 3) "..." : "")
+	return sprintf("\r\033[K[%s] %s  %s", r, x, l) }'
+barenv() { # BA: the awk -v list for BARAWK (PN is a validated name, so no quoting)
+	bc=${COLUMNS:-$(tput cols 2>/dev/null)}; case $bc in ""|*[!0-9]*) bc=80 ;; esac
+	case ${LC_ALL:-${LC_CTYPE:-${LANG:-}}} in *[Uu][Tt][Ff]-8*|*[Uu][Tt][Ff]8*) bf=█ be=░ ;; *) bf=# be=- ;; esac
+	BA="-v c=$bc -v d=$PDONE -v t=$PTOT -v f=$bf -v e=$be -v pn=$PN"
+}
+bar() { # bar STEP
+	[ -n "$BAR" ] && [ -n "$PN" ] || return 0
+	barenv
+	# shellcheck disable=SC2086
+	awk $BA -v s="$1" "$BARAWK"' BEGIN { printf "%s", bar(s) }'
+	BARV=1
+}
+unbar() { [ -z "$BARV" ] || { printf '\r\033[K'; BARV=; }; }
+prog_begin() { prog_end; PN=$1; [ -z "${RITZ_GET_GUI:-}" ] || echo "#start $PN"; }	# NAME's apply step starts
+prog_end() {
+	[ -n "$PN" ] || return 0
+	unbar; PDONE=$((PDONE + 1))
+	[ -z "${RITZ_GET_GUI:-}" ] || echo "#progress $PN $PDONE/$PTOT"
+	PN=
 }
 
 # ---- config, manifest ------------------------------------------------------------------
@@ -214,28 +251,49 @@ sc_names() {
 }
 
 # ---- running install.sh ----------------------------------------------------------------
-# run_script NAME ARG: install.sh output streams live; stderr is also kept in $TMP/err (through a fifo and tee).
-# Sets RC; collects "missing:" (exit 3) and "needs root:" (exit 4) lines.
+# run_script NAME ARG: runs install.sh; stdout and stderr go to the build log $LOG ($CACHE/logs/NAME.log, a header line first).
+# Quiet (the default): only the lines a friend must act on reach the screen (missing:, deps:, note:, restart:, setup:), above
+# the bar if there is one. --verbose: the whole output streams live to stdout. The GUI: as before, stdout and stderr apart.
+# Sets RC; collects "missing:" (exit 3) and "needs root:" (exit 4) lines from the log.
 # INT/TERM/HUP stop the build (timeout forwards TERM to install.sh): RC becomes 130/143/129 and INTR stays set.
 run_script() {
-	TMO=${RITZ_GET_TIMEOUT:-3600} SIG= BP=
-	rm -f "$TMP/ef"; mkfifo "$TMP/ef" || die "cannot create a fifo in $TMP"
+	TMO=${RITZ_GET_TIMEOUT:-3600} SIG= BP= TO= on= LOG=${LOGTO:-$CACHE/logs/$1.log}
+	hd="# $(date '+%F %T')  $1 install.sh $2 --yes  $(git -C "$SRCDIR/$1" rev-parse --short HEAD 2>/dev/null)"
+	{ mkdir -p "${LOG%/*}" && printf '%s\n' "$hd" >"$LOG"; } 2>/dev/null || { LOG=$TMP/log; printf '%s\n' "$hd" >"$LOG"; }
+	rm -f "$TMP/ef" "$TMP/of"; mkfifo "$TMP/ef" "$TMP/of" || die "cannot create a fifo in $TMP"
 	trap 'SIG=130; [ -z "$BP" ] || kill -TERM "$BP" 2>/dev/null' INT
 	trap 'SIG=143; [ -z "$BP" ] || kill -TERM "$BP" 2>/dev/null' TERM
 	trap 'SIG=129; [ -z "$BP" ] || kill -TERM "$BP" 2>/dev/null' HUP
-	tee "$TMP/err" >&2 <"$TMP/ef" 9>&- &
+	OF=$TMP/ef
+	if [ -n "${RITZ_GET_GUI:-}" ]; then	# the GUI reads stdout and stderr apart
+		unbar
+		tee -a "$LOG" <"$TMP/of" 9>&- &
+		TO=$!; OF=$TMP/of
+		tee -a "$LOG" >&2 <"$TMP/ef" 9>&- &
+	elif [ -n "$VERB" ]; then
+		unbar
+		tee -a "$LOG" <"$TMP/ef" 9>&- &
+	else
+		on=${BAR:+${PN:+1}}; BA=; [ -z "$on" ] || { barenv; BARV=1; }
+		# shellcheck disable=SC2086
+		awk $BA -v lg="$LOG" -v on="$on" "$BARAWK"'
+			{ print >> lg; fflush(lg)
+			  if ($0 ~ /^(missing|deps|note|restart|setup):/) { if (on) printf "\r\033[K"; print; fflush() }
+			  if (on) { printf "%s", bar("building " substr("|/-\\", NR % 4 + 1, 1)); fflush() } }' <"$TMP/ef" 9>&- &
+	fi
 	TP=$!
 	(cd "$SRCDIR/$1" && RITZ_GET_SPEC=$SPEC NO_COLOR=1 TERM=dumb RITZ_GET_SUDO=$SUDO \
-		exec timeout -k 10 "$TMO" ./install.sh "$2" --yes </dev/null 9>&-) 2>"$TMP/ef" &
+		exec timeout -k 10 "$TMO" ./install.sh "$2" --yes </dev/null 9>&-) >"$OF" 2>"$TMP/ef" &
 	BP=$!
 	[ -z "$SIG" ] || kill -TERM "$BP" 2>/dev/null
 	wait "$BP"; RC=$?
 	while kill -0 "$BP" 2>/dev/null; do wait "$BP"; RC=$?; done	# a trapped signal cuts a wait short
-	wait "$TP"
+	wait "$TP"; [ -z "$TO" ] || wait "$TO"
 	trap 'exit 1' INT TERM HUP
+	unbar
 	if [ -n "$SIG" ]; then INTR=$SIG; [ "$RC" = 0 ] || RC=$SIG; fi
-	[ "$RC" != 3 ] || grep '^missing:' "$TMP/err" >>"$TMP/missing"
-	[ "$RC" != 4 ] || grep '^needs root:' "$TMP/err" >>"$TMP/rootneed"
+	[ "$RC" != 3 ] || grep '^missing:' "$LOG" >>"$TMP/missing"
+	[ "$RC" != 4 ] || grep '^needs root:' "$LOG" >>"$TMP/rootneed"
 	return 0
 }
 
@@ -249,7 +307,8 @@ sync_subs() {
 # build NAME: sync submodules, then run the clone's install.sh --install.
 # rc 0 ok, 2 needs a newer ritz-get, 1 failed (BK = exit class 1|3|4, WHY = reason)
 build() {
-	BK=1 WHY=
+	BK=1 WHY= FLOG=
+	bar building
 	sync_subs "$SRCDIR/$1" || return 1
 	[ -x "$SRCDIR/$1/install.sh" ] || { WHY="no executable install.sh in the repo"; return 1; }
 	v=$(head -n 5 "$SRCDIR/$1/install.sh" | sed -n 's/^# *ritz-get-spec: *\([0-9][0-9]*\).*/\1/p' | head -n 1)
@@ -258,10 +317,10 @@ build() {
 	[ "$RC" != 0 ] || return 0
 	[ -z "$SIG" ] || { WHY=interrupted; return 1; }
 	case $RC in
-	3) BK=3 WHY="needs: $(sed -n 's/^missing: \([^ ]*\).*/\1/p' "$TMP/err" | tr '\n' ' ' | sed 's/ $//; s/ /, /g')" ;;
+	3) BK=3 WHY="needs: $(sed -n 's/^missing: \([^ ]*\).*/\1/p' "$LOG" | tr '\n' ' ' | sed 's/ $//; s/ /, /g')" ;;
 	4) BK=4 WHY="needs root; run: ritz-get install $1" ;;
-	124) if [ "$TMO" -ge 60 ]; then WHY="timed out after $((TMO / 60)) min"; else WHY="timed out after ${TMO}s"; fi ;;
-	*) WHY="install.sh exit $RC" ;;
+	124) FLOG=$LOG; if [ "$TMO" -ge 60 ]; then WHY="timed out after $((TMO / 60)) min"; else WHY="timed out after ${TMO}s"; fi ;;
+	*) FLOG=$LOG WHY="install.sh exit $RC" ;;
 	esac
 	return 1
 }
@@ -289,6 +348,7 @@ print_deps() {
 }
 
 finish() {
+	prog_end
 	print_deps
 	[ ! -s "$TMP/rootneed" ] || sort -u "$TMP/rootneed"
 	exit "${INTR:-$EXIT}"
@@ -297,7 +357,7 @@ finish() {
 # ---- install / remove ------------------------------------------------------------------
 # cleanup_fresh NAME CREATED: undo a failed first install (remove links, then the clone)
 cleanup_fresh() {
-	run_script "$1" --remove >/dev/null 2>&1
+	LOGTO=$TMP/cleanup.log; run_script "$1" --remove >/dev/null 2>&1; LOGTO=	# the install's log stays
 	if [ -n "$2" ]; then rm -rf "${SRCDIR:?}/$1"
 	else rm -rf "${SRCDIR:?}/$1"/* "$SRCDIR/$1"/.[!.]* 2>/dev/null; fi
 }
@@ -314,7 +374,7 @@ install_one() {
 	else
 		b=${BR:-$DEFBR}
 		[ -e "$d" ] || created=1
-		printf '%s\n' "$n: cloning $SRC${b:+ ($b)}"
+		printf '%s\n' "$n: cloning $SRC${b:+ ($b)}"; bar cloning
 		mkdir -p "$SRCDIR" || { failed "$n" "cannot create $SRCDIR"; return 0; }
 		# shellcheck disable=SC2086
 		git clone -q ${b:+-b "$b"} "$BASE/$SRC.git" "$d" || {
@@ -322,7 +382,7 @@ install_one() {
 			failed "$n" "clone failed"; return 0; }
 		fresh=1
 	fi
-	echo "$n: building"
+	unbar; echo "$n: building"
 	build "$n"; r=$?
 	if [ "$r" -eq 0 ]; then
 		echo "$n: installed $(branch "$n") $(short "$n")"
@@ -349,7 +409,7 @@ remove_one() {
 	fi
 	if [ -x "$d/install.sh" ]; then
 		run_script "$n" --remove
-		[ "$RC" -eq 0 ] || { echo "$n: FAILED (install.sh --remove exit $RC; clone kept)"; bump 1; return 0; }
+		[ "$RC" -eq 0 ] || { FLOG=$LOG; failed "$n" "install.sh --remove exit $RC; clone kept"; return 0; }
 	fi
 	if sc_has "$n"; then sc_rm "$n"; sc_db; fi
 	dp=$(cd "$d" 2>/dev/null && pwd -P) lk=$HOME/.local/bin/$n
@@ -519,7 +579,10 @@ upd_run() {
 		read -r a || a=
 		case $a in y|Y|yes) ;; *) echo aborted; return 0 ;; esac
 	fi
-	for n in $todo; do upd_apply "$n"; [ -z "$INTR" ] || break; done
+	# shellcheck disable=SC2086
+	set -- $todo; PDONE=0 PTOT=$#
+	for n; do prog_begin "$n"; upd_apply "$n"; [ -z "$INTR" ] || break; done
+	prog_end
 }
 
 cmd_update() {
@@ -542,7 +605,7 @@ cmd_update() {
 			rm -rf "$TMP"
 			RITZ_GET_SELF_UPDATED=1; export RITZ_GET_SELF_UPDATED
 			# shellcheck disable=SC2086
-			exec "$SRCDIR/ritz-get/ritz-get" update --yes ${EXPL:+$rest}
+			exec "$SRCDIR/ritz-get/ritz-get" update --yes ${VERB:+--verbose} ${EXPL:+$rest}
 		fi
 	fi
 	[ -z "$rest" ] && [ -z "$self" ] && echo "no programs installed"
@@ -557,7 +620,8 @@ cmd_update() {
 # ---- other commands --------------------------------------------------------------------
 cmd_install() {
 	[ $# -gt 0 ] || usage_err "install: no program given"
-	for n; do install_one "$n"; [ -z "$INTR" ] || break; done
+	PTOT=$#
+	for n; do prog_begin "$n"; install_one "$n"; [ -z "$INTR" ] || break; done
 }
 
 cmd_remove() {
@@ -584,6 +648,7 @@ cmd_switch() {
 	n=$1 b=$2 d=$SRCDIR/$1
 	valid "$n" || return 0
 	is_installed "$n" || { err "$n is not installed"; bump 1; return 0; }
+	prog_begin "$n"; bar fetching
 	old=$(branch "$n"); [ "$old" != HEAD ] || old=$(git -C "$d" rev-parse HEAD)
 	git -C "$d" fetch -q --no-recurse-submodules || { fail "$n" "fetch failed"; return 0; }
 	git -C "$d" checkout -q "$b" 2>/dev/null || { fail "$n" "cannot check out '$b'; see: ritz-get branches $n"; return 0; }
@@ -591,7 +656,7 @@ cmd_switch() {
 		git -C "$d" checkout -q "$old"
 		fail "$n" "cannot fast-forward $b to the remote; your local $b has diverged"; return 0
 	fi
-	echo "$n: building $b"
+	unbar; echo "$n: building $b"
 	build "$n"; r=$?
 	if [ "$r" -eq 0 ]; then echo "$n: now on $b $(short "$n")"; sc_refresh "$n"; return 0; fi
 	git -C "$d" checkout -q "$old"; sync_subs "$d" || :
@@ -614,10 +679,12 @@ cmd_reset() {
 		case $a in y|Y|yes) ;; *) echo aborted; return 0 ;; esac
 	fi
 	new=$SRCDIR/.$n.new old=$SRCDIR/.$n.old
+	prog_begin "$n"
 	rm -rf "${new:?}" "${old:?}"
-	printf '%s\n' "$n: cloning $SRC${DEFBR:+ ($DEFBR)}"
+	printf '%s\n' "$n: cloning $SRC${DEFBR:+ ($DEFBR)}"; bar cloning
 	# shellcheck disable=SC2086
 	git clone -q ${DEFBR:+-b "$DEFBR"} "$BASE/$SRC.git" "$new" || { rm -rf "${new:?}"; fail "$n" "clone failed"; return 0; }
+	unbar
 	mv "$d" "$old" && mv "$new" "$d" || { mv "$old" "$d" 2>/dev/null; fail "$n" "cannot replace the clone"; return 0; }
 	build "$n"; r=$?
 	if [ "$r" -eq 0 ]; then
@@ -747,6 +814,7 @@ main() {
 		a=$1; shift; n=$((n - 1))
 		case $a in
 		--yes|-y) YES=1 ;;
+		--verbose|-v) VERB=1 ;;
 		--offline) OFFLINE=1 ;;
 		--all) ALL=1 ;;
 		--porcelain) PORC=1 ;;
@@ -772,7 +840,8 @@ main() {
 		XDG_RUNTIME_DIR=/run/user/$(id -u); export XDG_RUNTIME_DIR	# systemctl --user from cron
 	fi
 	TMP=$(mktemp -d) || die "cannot create a temp dir"
-	trap 'rm -rf "$TMP"' EXIT
+	trap 'unbar; rm -rf "$TMP"' EXIT
+	[ -t 1 ] && [ -z "${RITZ_GET_GUI:-}" ] && [ "${TERM:-dumb}" != dumb ] && BAR=1
 	trap 'exit 1' INT TERM HUP
 	load_mf
 	case $cmd in
