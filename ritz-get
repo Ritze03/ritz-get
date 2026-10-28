@@ -494,6 +494,7 @@ install_one() {
 	fi
 	[ -z "$fresh" ] || cleanup_fresh "$n" "$created"
 	if [ "$r" -eq 2 ]; then echo "$n: SKIPPED (needs a newer ritz-get; run: ritz-get update)"; bump 1
+	elif [ -n "$fresh" ]; then failed "$n" "$WHY" "$BK"; echo "FAILED — nothing was installed"
 	else fail "$n" "$WHY" "$BK"; fi
 }
 
@@ -979,6 +980,7 @@ main() {
 	delete-data) cmd=delete_data ;;
 	*) usage >&2; exit 2 ;;
 	esac
+	[ "$(id -u)" != 0 ] || usage_err "do not run with sudo; it asks for root itself when needed"
 
 	SRCDIR=$(cfg dir)
 	SRCDIR=$(abspath "${SRCDIR:-${XDG_DATA_HOME:-$HOME/.local/share}/ritz-get/src}")

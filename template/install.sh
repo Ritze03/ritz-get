@@ -37,6 +37,14 @@ build() {
 	# Go: GOTOOLCHAIN=auto because the pinned Go version is newer than most distro Go packages.
 	GOTOOLCHAIN=auto CGO_ENABLED=0 go build -o "build/.$NAME.new" .
 	# Rust:  cargo build --release --locked && cp "target/release/$NAME" "build/.$NAME.new"
+	#        and first, because a rustup without a default toolchain makes `cargo` die (SPEC.md R6, P2):
+	#        # rustup with no default toolchain (fresh rustup): build with stable, never touch the user's default
+	#        if command -v rustup >/dev/null 2>&1 && ! cargo --version >/dev/null 2>&1; then
+	#        	d=$(rustup default 2>/dev/null) || d=
+	#        	rustup toolchain install stable --profile minimal --no-self-update
+	#        	[ -n "$d" ] || rustup default none || :     # rustup makes the first toolchain the default; undo that
+	#        	export RUSTUP_TOOLCHAIN=stable
+	#        fi
 	# Script run straight from the repo: no build; set TARGET=yourscript and leave build() empty (use `:`).
 	mv -f "build/.$NAME.new" "build/$NAME"
 }
