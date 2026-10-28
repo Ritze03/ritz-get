@@ -590,7 +590,7 @@ rgt '
 has "D47: Enter asked" "Add Shorty Title to the start menu? [Y/n]"; exists "D47: Enter means yes: shortcut" "$S1"
 rgt 'n
 ' install shorty; rc "D47: repair with a shortcut" 0
-has "D47: repair ran" "installed, repairing"; lacks "D47: repair with a shortcut does not ask again" "start menu"; exists "D47: repair keeps the shortcut" "$S1"
+has "D47: repair ran (the bar says so on a tty)" "shorty: repairing"; lacks "D47: repair with a shortcut does not ask again" "start menu"; exists "D47: repair keeps the shortcut" "$S1"
 rg shortcut shorty --remove >/dev/null; newcommit shorty
 rgn update --yes shorty; rc "D47: update" 0; has "D47: update did update" "shorty: updated"
 lacks "D47: update does not ask" "start menu"; gone "D47: update adds no shortcut" "$S1"
@@ -884,6 +884,43 @@ narrow "progress: pty: the repair bar never reaches the last column"
 rgb 60 C '' install nonesuch; rc "progress: pty, unknown program" 1
 eq "progress: pty: no bar for a run that applies nothing" 0 "$(grep -a -c '\] 1/1' "$T/out")"
 rgn remove alpha beta >/dev/null
+# the bar fills by steps and never goes back; on a terminal it replaces the transient status lines
+# frames: the bar frames in $T/out, one per line; fills: the number of full cells of each
+frames() { tr "\r" "\n" <"$T/out" | sed 's/\x1b\[K//' | grep -a '^\[[#-]*\] '; }
+fills() { frames | awk '{ print gsub(/#/, "#", $1) }'; }
+nol() { eq "$1" 0 "$(screen | grep -c "$2")"; }
+mono() { eq "$1" 1 "$(fills | awk 'NR > 1 && $1 < p { b = 1 } { p = $1 } END { print (NR > 1 && !b) ? 1 : 0 }')"; }
+rgb 60 C '' install alpha beta; rc "bar: pty install of two" 0
+mono "bar: pty install of two: the fill never decreases"
+eq "bar: pty install of two: starts empty, ends past half" "0 1" "$(fills | awk 'NR == 1 { a = $1 } { m = $1 } END { print a, (m > 7) }')"
+eq "bar: pty install of two: beta's first frame is at the middle or later" 1 "$(frames | grep -a ' 2/2 ' | head -n 1 | awk '{ print (gsub(/#/, "#", $1) >= 7) }')"
+nol "bar: pty install: no 'cloning' status line (the bar's label says it)" "alpha: cloning t/alpha"
+nol "bar: pty install: no 'building' status line" "alpha: building"
+eq "bar: pty install of two: the lines that stay" "alpha: installed main $(git -C "$SRC/alpha" rev-parse --short HEAD)
+Additional steps required:
+  Open the app and press go
+  Docs: https://example.com/x#y
+beta: installed main $(git -C "$SRC/beta" rev-parse --short HEAD)" "$(screen | grep -v '^$')"
+eq "bar: pty install of two: no bar is left" 0 "$(screen | grep -c '^\[')"
+rgn remove alpha beta >/dev/null
+rgn install alpha; has "bar: no tty: the cloning status line is still printed" "alpha: cloning t/alpha"
+has "bar: no tty: ... and the building one" "alpha: building"
+rgn install alpha; has "bar: no tty: the repairing status line is still printed" "alpha: installed, repairing (re-running install.sh)"
+rgb 60 C '' install alpha; rc "bar: pty repair" 0
+mono "bar: pty repair: the fill never decreases"
+nol "bar: pty repair: no repairing status line" "installed, repairing"
+rgn install beta >/dev/null; newcommit alpha; newcommit beta
+rgb 60 C '' update --yes alpha beta; rc "bar: pty update of two" 0
+mono "bar: pty update of two: the fill never decreases"
+eq "bar: pty update of two: beta's first frame is at the middle or later" 1 "$(frames | grep -a ' 2/2 ' | head -n 1 | awk '{ print (gsub(/#/, "#", $1) >= 7) }')"
+rgb 60 C '' switch beta dev; rc "bar: pty switch" 0
+mono "bar: pty switch: the fill never decreases"
+nol "bar: pty switch: no 'building' status line" "beta: building"
+has "bar: pty switch: the result stays" "beta: now on dev"
+rgb 60 C '' reset beta --yes; rc "bar: pty reset" 0
+mono "bar: pty reset: the fill never decreases"
+nol "bar: pty reset: no 'cloning' status line" "beta: cloning"
+rgn remove alpha beta >/dev/null
 
 # ---- quiet builds (D48): install.sh's output goes to a log; only what a friend must act on stays on screen ----
 mkrepo noisy 1 noisy; mkrepo loud 1 loud
@@ -944,9 +981,7 @@ lacks "GUI: no log path on the FAILED line" "build log"
 rgb 60 C '' install noisy; rc "quiet: pty install" 0
 has "quiet: pty: the bar is on screen through the build, one frame per output line" "noisy: building -"
 lacks "quiet: pty: the chatter is not printed" "compiling"
-eq "quiet: pty: nothing but the lines to act on is left" "noisy: installed, repairing (re-running install.sh)
-noisy: building
-note: start it with: noisy --daemon
+eq "quiet: pty: nothing but the lines to act on is left" "note: start it with: noisy --daemon
 restart: noisy to use the new version
 setup: do the thing
 noisy: installed main $(git -C "$SRC/noisy" rev-parse --short HEAD)" "$(screen | grep -v '^$')"
@@ -955,8 +990,8 @@ eq "quiet: pty failure: no bar is left" 0 "$(screen | grep -c '^\[')"
 eq "quiet: pty failure: FAILED line, log tail and trailer are on screen" "1 1 1" "$(screen | awk '/^loud: FAILED .* build log: / { a = 1 } /^  oops/ { b = 1 } /^FAILED — your/ { c = 1 } END { print a + 0, b + 0, c + 0 }')"
 rgb 60 C '' install noisy --verbose; rc "verbose: pty" 0
 has "verbose: pty: the chatter is streamed" "compiling noisy..."
-has "verbose: pty: the bar is drawn before the build as in PR 10" "] 1/1  noisy: building"
-lacks "verbose: pty: no per-line frames" "building -"
+lacks "verbose: pty: no bar (it would fight the stream)" "] 1/1"
+has "verbose: pty: the status lines are printed instead" "noisy: building"
 rgn remove noisy loud >/dev/null
 RITZ_GET_MANIFEST=$T/programs; export RITZ_GET_MANIFEST
 
