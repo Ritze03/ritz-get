@@ -166,7 +166,7 @@ A human may also run `./install.sh --install` or `--remove` by hand, without `--
   delete a path only if it is a symlink pointing into this clone (check with `readlink`; the
   template's `unlink_ours` does). It MUST NOT delete configuration or user data, even data the
   program created at runtime. ritz-get's `delete-data` deletes the `data:` paths the manifest
-  declares (section 6); program authors list there every folder their program creates outside
+  declares (section 6), after the user types the repository name (the `REPO` of `OWNER/REPO`) to confirm, or with `--yes`; program authors list there every folder their program creates outside
   the clone.
 - **R23** `--remove` MUST exit 0 when the program is not installed, or only partly installed.
 - **R24** `--remove` MUST NOT build anything and MUST NOT need a build tool or the network. It

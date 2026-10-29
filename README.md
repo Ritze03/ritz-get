@@ -43,7 +43,7 @@ ritz-get install NAME...           # clone, build, install (on an installed prog
 ritz-get install NAME --branch B   # same, from another branch
 ritz-get update [NAME...]          # update ritz-get, then rebuild what changed (asks first)
 ritz-get remove NAME...            # uninstall and delete the clone, keep its data (alias: uninstall)
-ritz-get delete-data NAME...       # delete the data of an uninstalled program (asks first; --yes)
+ritz-get delete-data NAME...       # delete the data of an uninstalled program (asks you to type the repository name; --yes skips that)
 ritz-get branches NAME             # branches of the remote, the current one marked with *
 ritz-get switch NAME BRANCH        # check out another branch and rebuild
 ritz-get reset NAME                # throw away local changes: re-clone and rebuild

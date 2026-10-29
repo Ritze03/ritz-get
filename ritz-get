@@ -41,7 +41,7 @@ usage: ritz-get COMMAND [OPTIONS]
   install NAME... [--branch B]    clone, build and install (installed: repair)
   update [NAME...] [--yes]        update ritz-get, then rebuild programs that changed
   remove NAME...                  uninstall and delete the clone, keep its data (alias: uninstall)
-  delete-data NAME... [--yes]     delete the data an uninstalled program left behind (asks first)
+  delete-data NAME... [--yes]     delete the data an uninstalled program left behind (asks you to type the repo name)
   branches NAME                   branches of the remote, current one marked
   switch NAME BRANCH              check out another branch and rebuild
   reset NAME [--yes]              discard local changes: re-clone and rebuild
@@ -758,9 +758,11 @@ $have
 EOF
 	if [ -z "$YES" ]; then
 		[ -z "${RITZ_GET_GUI:-}" ] && [ -t 0 ] || { echo "$n: nothing deleted (pass --yes)"; return 0; }
-		printf 'Delete these? [y/N] '
-		read -r a || a=
-		case $a in y|Y|yes) ;; *) echo aborted; return 0 ;; esac
+		rp=${SRC##*/}	# the repository name as in the manifest source, not the title
+		echo "All of $n's config and data listed above will be deleted for good."
+		printf 'Type the repository name (%s) to confirm: ' "$rp"
+		IFS= read -r a || a=
+		[ "$a" = "$rp" ] || { echo aborted; return 0; }
 	fi
 	while IFS=$US read -r p t; do	# checked again right before rm; a symlink is removed, never followed
 		# rm runs inside the parent data_ok resolved (dk_d): if that parent was swapped for a symlink meanwhile, nothing is removed
