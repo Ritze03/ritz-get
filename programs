@@ -57,7 +57,7 @@ gamescope-ritz Ritze03/gamescope-ritz "SteamOS session compositing window manage
 [Helpers]
 ritz-get Ritze03/ritz-get "Install, update and remove Ritze03's programs, built from source"
 ritz-get-gui Ritze03/ritz-get-gui "Graphical frontend for ritz-get"
-  title: ritz-get GUI
+  title: Ritz-Get-GUI
   data: ~/.config/ritz-get-gui
   data: ~/.cache/ritz-get-gui
 ccorral Ritze03/ccorral "Keeps Claude Code sessions on a few CPU cores so the desktop stays fast"
