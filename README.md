@@ -1,4 +1,4 @@
-# ritz-get
+# Ritz-Get
 
 Installs, updates and removes Ritze03's programs on any Linux distro. Every program is built
 on your machine from a git clone, into your home folder; nothing needs root unless a program
@@ -16,8 +16,8 @@ With the one-time installer:
 curl -fsSL https://github.com/Ritze03/ritz-get/releases/latest/download/install-ritz-get.sh | sh
 ```
 
-It checks for `git`, asks where to keep the clones (the default is fine), installs ritz-get,
-and offers to put `~/.local/bin` on your `PATH`. After that ritz-get updates itself.
+It checks for `git`, asks where to keep the clones (the default is fine), installs Ritz-Get,
+and offers to put `~/.local/bin` on your `PATH`. After that Ritz-Get updates itself.
 
 Without the installer:
 
@@ -25,14 +25,14 @@ Without the installer:
 git clone https://github.com/Ritze03/ritz-get ~/.local/share/ritz-get/src/ritz-get && ~/.local/share/ritz-get/src/ritz-get/install.sh --install --yes
 ```
 
-Make sure `~/.local/bin` is in your `PATH`. To remove ritz-get, run `install.sh --remove` from
+Make sure `~/.local/bin` is in your `PATH`. To remove Ritz-Get, run `install.sh --remove` from
 its clone and delete the folder.
 
 ## Requirements
 
-- `git` and a POSIX `sh` with the usual tools (coreutils, util-linux, `awk`). That is all ritz-get needs.
+- `git` and a POSIX `sh` with the usual tools (coreutils, util-linux, `awk`). That is all Ritz-Get needs.
 - Whatever a program needs to build (`go`, `cargo`, `npm`, a C++ compiler, ...). If something is
-  missing, ritz-get prints one line to copy, like `deps: sudo pacman -S --needed gcc`
+  missing, Ritz-Get prints one line to copy, like `deps: sudo pacman -S --needed gcc`
   (also for `dnf` and `apt`), and exits with code 3.
 
 ## Commands
@@ -66,7 +66,7 @@ Options: `--yes` answers "yes" to every question, `--offline` makes `list` skip 
   `building` lines); lines you must act on (`missing:`, `deps:`,
   `note:`, `restart:`, `setup:`) still print. A failed build prints the log's path and its last lines.
 
-- `update` first updates ritz-get itself and, if that changed, continues with the new version.
+- `update` first updates Ritz-Get itself and, if that changed, continues with the new version.
   It then rebuilds every installed program whose branch has new commits. A failure in one
   program doesn't stop the others; the exit code is non-zero at the end. A failed build leaves
   the installed version as it was. `update` ends with `N updated, N skipped, N failed`.
@@ -91,18 +91,18 @@ If you already update your system in a script, add one line next to `yay` or `fl
 ritz-get update --yes
 ```
 
-Held and modified programs are skipped, and a second ritz-get running at the same time is
+Held and modified programs are skipped, and a second Ritz-Get running at the same time is
 detected, so this is safe to run from cron.
 
 ## Where things live
 
-- The clones: `~/.local/share/ritz-get/src/NAME` by default. Everything ritz-get puts elsewhere
+- The clones: `~/.local/share/ritz-get/src/NAME` by default. Everything Ritz-Get puts elsewhere
   (`~/.local/bin/NAME`, shortcuts) is a symlink into that folder, or a file generated inside it
   (`.ritz-get/`).
 - Settings, only if you changed them: `~/.config/ritz-get/config`, with `key=value` lines.
   - `dir=` is the folder for the clones. `ritz-get dir PATH` moves the whole folder there in one
     step and repairs every program's links. If you moved it by hand, run `ritz-get dir PATH` to
-    tell ritz-get. The folder can be your own development folder: clones with changes are never touched.
+    tell Ritz-Get. The folder can be your own development folder: clones with changes are never touched.
   - `shortcuts=` is the folder for the shortcuts, `~/.local/share/applications` by default.
     `ritz-get shortcuts PATH` moves them.
 - `${XDG_CACHE_HOME:-~/.cache}/ritz-get/last-run`: the summary of the last `update`.
@@ -116,10 +116,10 @@ can't be cloned by other people, so they stay out.
 
 ## For program repos
 
-A program is a git repo with an executable `install.sh` that ritz-get runs from inside the
+A program is a git repo with an executable `install.sh` that Ritz-Get runs from inside the
 clone. The rules (what `install.sh` must do, exit codes, the optional shortcut and icon files)
 are in [SPEC.md](SPEC.md), and [`template/install.sh`](template/install.sh) is the file to start from.
-Git submodules are fine: ritz-get keeps them in sync on every install, update, switch and reset.
+Git submodules are fine: Ritz-Get keeps them in sync on every install, update, switch and reset.
 
 ## For frontends
 
