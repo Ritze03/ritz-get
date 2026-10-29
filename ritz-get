@@ -255,6 +255,13 @@ data_hint() {
 is_installed() { [ -e "$SRCDIR/$1/.git" ]; }
 branch() { git -C "$SRCDIR/$1" rev-parse --abbrev-ref HEAD; }
 short() { git -C "$SRCDIR/$1" rev-parse --short HEAD; }
+# gone NAME: the checked-out branch has an upstream configured but it no longer resolves (deleted on the remote; call after fetch --prune)
+gone() {
+	_b=$(branch "$1" 2>/dev/null) || return 1
+	[ "$_b" != HEAD ] || return 1
+	[ -n "$(git -C "$SRCDIR/$1" config --get "branch.$_b.merge")" ] || return 1
+	! git -C "$SRCDIR/$1" rev-parse -q --verify '@{u}' >/dev/null 2>&1
+}
 held() { [ "$(git -C "$SRCDIR/$1" config --get ritz-get.hold)" = true ]; }
 # changes NAME: sets DIRTY (changed files) and AHEAD (local commits); modified = either > 0
 changes() {
@@ -525,7 +532,7 @@ want() { [ -z "$WANT" ] || case $WANT in *" $1 "*) return 0 ;; *) return 1 ;; es
 # probe NAME SRC BRANCH: installed -> git fetch, else one ls-remote. Result: f.NAME (rc), r.NAME, e.NAME
 probe() {
 	if is_installed "$1"; then
-		git -C "$SRCDIR/$1" fetch -q --no-recurse-submodules 2>"$TMP/e.$1" </dev/null
+		git -C "$SRCDIR/$1" fetch -q --prune --no-recurse-submodules 2>"$TMP/e.$1" </dev/null
 	else
 		ref=HEAD; [ -z "$3" ] || ref=refs/heads/$3
 		git ls-remote "$BASE/$2.git" "$ref" >"$TMP/r.$1" 2>"$TMP/e.$1" </dev/null
@@ -541,7 +548,8 @@ inst_fields() {
 	changes "$1"
 	LAT=- BEH=- ST=unknown
 	if [ -z "$OFF" ]; then
-		if probed_ok "$1"; then
+		if probed_ok "$1" && gone "$1"; then ST=branch-gone
+		elif probed_ok "$1"; then
 			LAT=$(git -C "$SRCDIR/$1" log -1 --format='%cs %h' '@{u}' 2>/dev/null)
 			BEH=$(git -C "$SRCDIR/$1" rev-list --count 'HEAD..@{u}' 2>/dev/null)
 			ST=current; [ "${BEH:-0}" -eq 0 ] || ST=behind
@@ -616,6 +624,7 @@ cmd_list() {
 			if (st == "current") s = "up to date"
 			else if (st == "behind") s = "update available: " $13 " behind, latest " $12
 			else if (st == "modified") s = "modified: " pl($14, "changed file") ", " pl($15, "local commit")
+			else if (st == "branch-gone") s = "branch " $10 " deleted on the remote; pick another: ritz-get branches " $3
 			else if (st == "fetch-failed") s = "fetch failed"
 			s = $10 " " $11 (s != "" ? "  " s : "")
 			if ($9 == 1) s = s "  [held]"
@@ -652,7 +661,10 @@ upd_check() {
 	if modified "$n"; then
 		echo "$n: SKIPPED (local changes; ritz-get reset $n to discard them)"; SK=$((SK + 1)); return 0
 	fi
-	git -C "$d" fetch -q --no-recurse-submodules || { fail "$n" "fetch failed"; return 0; }
+	git -C "$d" fetch -q --prune --no-recurse-submodules || { fail "$n" "fetch failed"; return 0; }
+	if gone "$n"; then
+		echo "$n: SKIPPED (branch $(branch "$n") was deleted on the remote; ritz-get branches $n, then ritz-get switch $n BRANCH)"; SK=$((SK + 1)); return 0
+	fi
 	b=$(git -C "$d" rev-list --count 'HEAD..@{u}' 2>/dev/null)
 	if [ "${b:-0}" -eq 0 ]; then echo "$n: up to date"; else todo="$todo $n"; fi
 }
@@ -800,7 +812,7 @@ cmd_switch() {
 	is_installed "$n" || { err "$n is not installed"; bump 1; return 0; }
 	prog_begin "$n"; bar fetching 0
 	old=$(branch "$n"); [ "$old" != HEAD ] || old=$(git -C "$d" rev-parse HEAD)
-	git -C "$d" fetch -q --no-recurse-submodules || { fail "$n" "fetch failed"; return 0; }
+	git -C "$d" fetch -q --prune --no-recurse-submodules || { fail "$n" "fetch failed"; return 0; }
 	git -C "$d" checkout -q "$b" 2>/dev/null || { fail "$n" "cannot check out '$b'; see: ritz-get branches $n"; return 0; }
 	if ! git -C "$d" merge --ff-only -q '@{u}' >/dev/null 2>&1; then
 		git -C "$d" checkout -q "$old"
