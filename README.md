@@ -55,6 +55,8 @@ ritz-get dir [PATH]                # show, or move, the folder the clones live i
 ritz-get help
 ```
 
+Run it as yourself, not with `sudo`: it refuses to run as root and asks for root itself when a program needs it.
+
 Options: `--yes` answers "yes" to every question, `--offline` makes `list` skip the network,
 `--all` makes `list` show programs you have no access to, `--porcelain` is for frontends,
 `--verbose` (`-v`) shows the whole build output.

@@ -232,7 +232,8 @@ exists "repair re-creates the link" "$HOME/.local/bin/alpha"
 rg install alpha --branch dev; rc "install --branch on installed" 1; has "points to switch" "ritz-get switch alpha dev"
 
 rg install eps; rc "failed first install" 1
-has "failure trailer" "FAILED — your installed version is unchanged and still works"
+has "failure trailer: first install says nothing was installed" "FAILED — nothing was installed"
+lacks "failure trailer: first install does not claim an unchanged version" "installed version is unchanged"
 gone "failed first install deletes the clone ritz-get created" "$SRC/eps"
 has "failed first install ran --remove" "eps"; eq "remove log" eps "$(cat "$HOME/removed.log")"
 mkdir -p "$SRC/eps"; echo x >"$SRC/eps/keep"
@@ -288,6 +289,14 @@ rg update beta --yes; rc "update NAME updates a held program" 0; has "held progr
 rg unhold beta; rc "unhold" 0
 eq "unhold clears it" 0 "$(git -C "$SRC/beta" config --get-all ritz-get.hold | wc -l | tr -d ' ')"
 rg hold nope; rc "hold unknown" 1
+
+# ---- refuse to run as root: a fake `id` earlier in PATH says uid 0 ----
+mkdir -p "$T/fakeid"; printf '#!/bin/sh\n[ "$1" = -u ] && echo 0 || exec /usr/bin/id "$@"\n' >"$T/fakeid/id"; chmod +x "$T/fakeid/id"
+rge PATH="$T/fakeid:$PATH" install alpha; rc "root: install refused" 2
+has "root: message" "ritz-get: do not run with sudo; it asks for root itself when needed"
+rge PATH="$T/fakeid:$PATH" remove alpha; rc "root: remove refused" 2
+rge PATH="$T/fakeid:$PATH" help; rc "root: help is still allowed" 0
+has "root: help prints usage" "usage: ritz-get"
 
 mv "$T/remote/t/beta.git" "$T/remote/t/beta.gone"
 rg list --porcelain; eq "fetch-failed keeps installed visible" "installed fetch-failed" "$(fld beta 7) $(fld beta 8)"
@@ -953,7 +962,8 @@ has "quiet: ... including stderr" "  oops"
 has "quiet: ... 15 lines of it" "  step 7"
 lacks "quiet: ... and no more" "step 6"
 eq "quiet: nothing is streamed (the tail is the only copy)" 1 "$(grep -c 'step 20' "$T/all")"
-has "quiet: the trailer is still there" "FAILED — your installed version is unchanged and still works"
+has "quiet: the first-install trailer is still there" "FAILED — nothing was installed"
+lacks "quiet: ... and does not claim an unchanged version" "installed version is unchanged"
 eq "quiet: the failed first install keeps its log (cleanup does not overwrite it)" 1 "$(grep -c '^oops' "$LG/loud.log")"
 RITZ_GET_OS_RELEASE=$T/os-arch; export RITZ_GET_OS_RELEASE
 rgn install gamma theta; rc "quiet: missing tools" 3
@@ -987,7 +997,7 @@ setup: do the thing
 noisy: installed main $(git -C "$SRC/noisy" rev-parse --short HEAD)" "$(screen | grep -v '^$')"
 rgb 60 C '' install loud; rc "quiet: pty failing build" 1
 eq "quiet: pty failure: no bar is left" 0 "$(screen | grep -c '^\[')"
-eq "quiet: pty failure: FAILED line, log tail and trailer are on screen" "1 1 1" "$(screen | awk '/^loud: FAILED .* build log: / { a = 1 } /^  oops/ { b = 1 } /^FAILED — your/ { c = 1 } END { print a + 0, b + 0, c + 0 }')"
+eq "quiet: pty failure: FAILED line, log tail and trailer are on screen" "1 1 1" "$(screen | awk '/^loud: FAILED .* build log: / { a = 1 } /^  oops/ { b = 1 } /^FAILED — nothing was installed/ { c = 1 } END { print a + 0, b + 0, c + 0 }')"
 rgb 60 C '' install noisy --verbose; rc "verbose: pty" 0
 has "verbose: pty: the chatter is streamed" "compiling noisy..."
 lacks "verbose: pty: no bar (it would fight the stream)" "] 1/1"

@@ -69,7 +69,8 @@ every clone, update, switch and reset).
 If `--install` fails, ritz-get puts the clone (submodules included) back on the previous commit
 and tells the user "your installed version is unchanged and still works", so a failed build MUST
 leave the old install working (R18). If the *first* install fails, ritz-get runs `--remove --yes` before it
-deletes the clone, so `--remove` MUST cope with a half-finished install (R23). After a
+deletes the clone, so `--remove` MUST cope with a half-finished install (R23); it then says
+"nothing was installed" instead, because there is no old version. After a
 successful `--remove`, ritz-get deletes the clone.
 
 A human may also run `./install.sh --install` or `--remove` by hand, without `--yes`.
@@ -97,7 +98,9 @@ A human may also run `./install.sh --install` or `--remove` by hand, without `--
   printed before. Build output is git-ignored by a committed `.gitignore`, and nothing may
   rewrite a tracked file: `npm ci` (not `npm install`), `cargo build --locked`, no
   `go mod tidy`, no code generators that rewrite committed files. (ritz-get treats a clone with
-  changed or untracked files as *locally modified* and refuses to update it.)
+  changed or untracked files as *locally modified* and refuses to update it.) A Rust program MUST
+  also cope with a rustup that has no default toolchain (`cargo` is then a shim that exits with
+  "no default is configured"): see the Rust lines in P2.
 - **R7** Generated and built files SHOULD all go into one git-ignored directory `build/` at the
   clone root (`.gitignore` line: `/build/`). If the repo already tracks a `build/` directory, use
   `.ritz-build/` and read it wherever this file says `build/`. Output directories that cannot be
@@ -368,6 +371,14 @@ an atomic rename: a running process keeps the old file, and a failed build never
 build() {
 	GOTOOLCHAIN=auto CGO_ENABLED=0 go build -o "build/.$NAME.new" .
 	# Rust:   cargo build --release --locked && cp "target/release/$NAME" "build/.$NAME.new"
+	#         and first, because a rustup without a default toolchain makes `cargo` die:
+	#        # rustup with no default toolchain (fresh rustup): build with stable, never touch the user's default
+	#        if command -v rustup >/dev/null 2>&1 && ! cargo --version >/dev/null 2>&1; then
+	#        	d=$(rustup default 2>/dev/null) || d=
+	#        	rustup toolchain install stable --profile minimal --no-self-update
+	#        	[ -n "$d" ] || rustup default none || :     # rustup makes the first toolchain the default; undo that
+	#        	export RUSTUP_TOOLCHAIN=stable
+	#        fi
 	# meson:  [ -d build/meson ] || meson setup build/meson --buildtype=release
 	#         meson compile -C build/meson && cp "build/meson/$NAME" "build/.$NAME.new"
 	# cmake:  cmake -S . -B build/cmake -DCMAKE_BUILD_TYPE=Release && cmake --build build/cmake
@@ -551,6 +562,10 @@ auto-update), version display, hiding repos the user cannot reach, start-menu sh
 manifest, the lock that stops two runs at once, and deleting the clone after `--remove`. Your
 `install.sh` never needs to know which of these triggered it: it only ever sees `--install` on
 some commit, or `--remove`.
+
+ritz-get itself refuses to run as root (`id -u` is 0): it prints `ritz-get: do not run with sudo; it
+asks for root itself when needed` to stderr and exits 2 before doing anything. It is per-user and
+asks for root through `$RITZ_GET_SUDO` only when an `install.sh` needs it (R33).
 
 Users may switch to any branch, and ritz-get then runs that branch's `install.sh`. Every branch
 you expect people to use MUST conform. The build MUST NOT need credentials beyond the user's
