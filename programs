@@ -36,7 +36,7 @@ ForzaTelemetryV3 Ritze03/ForzaTelemetryV3 "Live telemetry dashboard for Forza Ho
   data: ~/.local/share/ForzaTelemetryV3
 simple-screensharing Ritze03/simple-screensharing "Friends screensharing: native desktop client (E2E-encrypted, low latency)"
   title: Simple Screensharing
-  setup: Install runtime dependencies: https://github.com/Ritze03/simple-screensharing#dependencies-arch-linux
+  setup: Install runtime dependencies: https://github.com/Ritze03/simple-screensharing#dependencies
   setup: Needs a relay: self-host from this repo, or use a friend's; the app takes a join link
   data: ~/.config/simple-screensharing
   data: ~/.cache/simple-screensharing
