@@ -31,7 +31,7 @@ D<TAB>name<TAB>path<TAB>kb          (only with --data)
 | kind | `program` \| `website` |
 | source | `OWNER/REPO` or the URL (`-` for unlisted) |
 | state | `installed`, `available` (not installed, reachable), `unreachable` (only with `--all`), `offline` (not installed, network unknown), `website`, `unlisted` |
-| status | `installed`/`unlisted` only, else `-`: `current`, `behind`, `modified` (wins over everything), `fetch-failed`, `unknown` (offline) |
+| status | `installed`/`unlisted` only, else `-`: `current`, `behind`, `modified` (wins over everything), `branch-gone` (the checked-out branch was deleted on the remote; latest and behind are `-`; readers that do not know this value must treat it like `unknown`), `fetch-failed`, `unknown` (offline) |
 | held | `1` \| `0` (`ritz-get hold NAME`) |
 | branch | installed branch; not installed: manifest BRANCH or `-` |
 | installed | `YYYY-MM-DD sha` or `-` |

@@ -382,6 +382,24 @@ git -C "$SRC/beta" branch -q -D dev
 rg switch beta dev; rc "switch after dropping the local branch" 0
 rg switch beta main >/dev/null
 
+# ---- branch deleted on the remote ------------------------------------------------------
+rg switch beta dev >/dev/null
+git -C "$T/remote/t/beta.git" branch -q -D dev
+rg list --porcelain; rc "branch-gone: list" 0
+eq "branch-gone: status, latest, behind" "branch-gone - -" "$(fld beta 8) $(fld beta 12) $(fld beta 13)"
+rg list; has "branch-gone: human hint" "branch dev deleted on the remote; pick another: ritz-get branches beta"
+H=$(git -C "$SRC/beta" rev-parse HEAD)
+rg update beta --yes; has "branch-gone: update skips" "beta: SKIPPED (branch dev was deleted on the remote; ritz-get branches beta, then ritz-get switch beta BRANCH)"
+nol "branch-gone: not 'up to date'" "beta: up to date"
+eq "branch-gone: clone untouched" "$H dev" "$(git -C "$SRC/beta" rev-parse HEAD) $(git -C "$SRC/beta" rev-parse --abbrev-ref HEAD)"
+echo x >"$SRC/beta/gonefile"
+rg list --porcelain; eq "branch-gone: dirty clone is modified" modified "$(fld beta 8)"
+rm "$SRC/beta/gonefile"
+rg switch beta main; rc "branch-gone: switch away" 0; has "branch-gone: switch message" "beta: now on main"
+rg list --porcelain; eq "branch-gone: back to current" "current main" "$(fld beta 8) $(fld beta 10)"
+git -C "$SRC/beta" branch -q -D dev
+(cd "$T/work/beta" && git push -q origin dev)
+
 # ---- remove, uninstall, unlisted -------------------------------------------------------
 git clone -q "file://$T/remote/t/alpha.git" "$SRC/orphan"
 rg list --porcelain

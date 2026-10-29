@@ -73,6 +73,7 @@ Options: `--yes` answers "yes" to every question, `--offline` makes `list` skip 
 - Programs you changed yourself (edited files or local commits) are marked `modified` and
   skipped by `update`, so your work is never overwritten. `reset NAME` discards the changes.
 - `list` checks what is new on the remote; `list --offline` doesn't.
+- If the branch a program is on was deleted on the remote, `list` shows `branch-gone` and `update` skips it; pick another branch with `ritz-get branches NAME` and `ritz-get switch NAME BRANCH`.
 - A program may print extra steps after installing ("Additional steps required"); do those by hand.
 - Shortcuts are flat entries in your app menu, named `ritz-get-NAME.desktop`. Only programs that
   ship a `NAME.desktop` can have one; websites always can. `install` asks whether to add the shortcut
