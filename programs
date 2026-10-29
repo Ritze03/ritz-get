@@ -56,6 +56,7 @@ gamescope-ritz Ritze03/gamescope-ritz "SteamOS session compositing window manage
 
 [Helpers]
 ritz-get Ritze03/ritz-get "Install, update and remove Ritze03's programs, built from source"
+  title: Ritz-Get
 ritz-get-gui Ritze03/ritz-get-gui "Graphical frontend for ritz-get"
   title: Ritz-Get-GUI
   data: ~/.config/ritz-get-gui
