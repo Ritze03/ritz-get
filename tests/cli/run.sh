@@ -1028,6 +1028,8 @@ alpha t/alpha "Alpha program"
   data: ~/.config
   data: ~/.local/share
   data: ~/a/../b
+omega t/omega-repo "Omega Title"
+  data: ~/.config/omega
 beta t/beta "Beta helper"
   data: ~/.config/blink
   data: ~/.config/viaparent/x
@@ -1075,23 +1077,38 @@ has "D49: remove prints the hint" "alpha: data kept in ~/.config/alpha, ~/.local
 exists "D49: remove keeps the data" "$HOME/.config/alpha/f"; exists "D49: remove keeps the data (2)" "$HOME/.local/share/alpha/f"
 rg remove beta; lacks "D49: remove without data: no hint" "data kept"
 rg delete-data alpha; rc "D49: GUI=1, no --yes: no prompt, nothing deleted" 0
-has "D49: GUI=1: says nothing was deleted" "alpha: nothing deleted (pass --yes)"; lacks "D49: GUI=1: no question" "[y/N]"
+has "D49: GUI=1: says nothing was deleted" "alpha: nothing deleted (pass --yes)"; lacks "D49: GUI=1: no question" "Type the repository name"
 has "D49: GUI=1: #start line" "#start alpha"; has "D49: GUI=1: #progress line" "#progress alpha 1/1"
 rg delete-data alpha site; has "D49: GUI=1: two names, M = 2" "#progress site 2/2"
 has "D49: delete-data lists the paths with sizes" "~/.config/alpha"
 exists "D49: GUI=1 no --yes: data kept" "$HOME/.config/alpha/f"
 printf 'y\n' | RITZ_GET_GUI=1 timeout 60 script -qec "sh '$RG' delete-data alpha" /dev/null >"$T/out" 2>"$T/err"; done_run
-lacks "D49: GUI=1 on a terminal never prompts" "[y/N]"; exists "D49: GUI=1 on a terminal: nothing deleted" "$HOME/.config/alpha/f"
+lacks "D49: GUI=1 on a terminal never prompts" "Type the repository name"; exists "D49: GUI=1 on a terminal: nothing deleted" "$HOME/.config/alpha/f"
 rgn delete-data alpha; rc "D49: no tty, no --yes" 0
-has "D49: no tty: nothing deleted" "alpha: nothing deleted (pass --yes)"; lacks "D49: no tty: no question" "[y/N]"; exists "D49: no tty: data kept" "$HOME/.config/alpha/f"
+has "D49: no tty: nothing deleted" "alpha: nothing deleted (pass --yes)"; lacks "D49: no tty: no question" "Type the repository name"; exists "D49: no tty: data kept" "$HOME/.config/alpha/f"
 rgt 'n
 ' delete-data alpha; rc "D49: tty, answer n" 0
-has "D49: the question" "Delete these? [y/N]"; has "D49: answer n aborts" "aborted"; exists "D49: answer n: data kept" "$HOME/.config/alpha/f"
+has "D49: the warning" "All of alpha's config and data listed above will be deleted for good."; has "D49: the question" "Type the repository name (alpha) to confirm:"; has "D49: answer n aborts" "aborted"; exists "D49: answer n: data kept" "$HOME/.config/alpha/f"
 rgt '
 ' delete-data alpha; rc "D49: tty, plain Enter = No" 0; exists "D49: Enter: data kept" "$HOME/.config/alpha/f"
 rgt 'y
 ' delete-data alpha; rc "D49: tty, answer y" 0
-has "D49: answer y deletes" "alpha: data deleted"; gone "D49: y: first path gone" "$HOME/.config/alpha"; gone "D49: y: second path gone" "$HOME/.local/share/alpha"
+has "D49: answer y aborts" "aborted"; exists "D49: y: data kept" "$HOME/.config/alpha/f"
+rgt 'Alpha program
+' delete-data alpha; has "D49: the display title aborts" "aborted"; exists "D49: title: data kept" "$HOME/.config/alpha/f"
+rgt 'ALPHA
+' delete-data alpha; has "D49: case differs: aborts" "aborted"; exists "D49: case: data kept" "$HOME/.config/alpha/f"
+rgt 'alpha 
+' delete-data alpha; has "D49: trailing space: aborts" "aborted"; exists "D49: space: data kept" "$HOME/.config/alpha/f"
+mkdir -p "$HOME/.config/omega"; echo x >"$HOME/.config/omega/f"
+rgt 'omega
+' delete-data omega; has "D49: manifest name is not the repo name: aborts" "aborted"; exists "D49: name != repo: data kept" "$HOME/.config/omega/f"
+has "D49: prompt shows the repo basename" "Type the repository name (omega-repo) to confirm:"
+rgt 'omega-repo
+' delete-data omega; has "D49: the repo name deletes" "omega: data deleted"; gone "D49: repo name: dir gone" "$HOME/.config/omega"
+rgt 'alpha
+' delete-data alpha; rc "D49: tty, exact repo name" 0
+has "D49: exact name deletes" "alpha: data deleted"; gone "D49: name: first path gone" "$HOME/.config/alpha"; gone "D49: name: second path gone" "$HOME/.local/share/alpha"
 exists "D49: a sibling of a declared path is left alone" "$KEEP/f"
 rg delete-data alpha; rc "D49: nothing left" 0; has "D49: nothing left: message" "alpha: no data left"
 mkdir -p "$HOME/.config/alpha"; echo x >"$HOME/.alpharc"
