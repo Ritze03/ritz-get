@@ -50,7 +50,7 @@ SteamAlt Ritze03/SteamAlt "Copy Steam game saves and settings between accounts o
   data: ~/.cache/steamalt
 gamescope-ritz Ritze03/gamescope-ritz "SteamOS session compositing window manager, with added features"
   title: Gamescope Ritz
-  setup: Ritz users: copy its Ritz module by hand, see https://github.com/Ritze03/gamescope-ritz#quick-start
+  setup: Ritz users: copy its Ritz module by hand, see https://github.com/Ritze03/gamescope-ritz#ritz-launcher-extension
   data: ~/.config/gamescope-ritz
   data: ~/.local/share/gamescope-ritz
 
