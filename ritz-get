@@ -390,8 +390,11 @@ run_script() {
 			  if (on) { printf "%s", bar("building " substr("|/-\\", NR % 4 + 1, 1)); fflush() } }' <"$TMP/ef" 9>&- &
 	fi
 	TP=$!
+	# Terminal sudo: timeout must not setpgid, or sudo is a background group and cannot read the password from /dev/tty.
+	# --foreground signals only install.sh, so a timed-out terminal build may leave its children running (known ceiling).
+	FG=; [ "$SUDO" != sudo ] || FG=--foreground
 	(cd "$SRCDIR/$1" && RITZ_GET_SPEC=$SPEC NO_COLOR=1 TERM=dumb RITZ_GET_SUDO=$SUDO \
-		exec timeout -k 10 "$TMO" ./install.sh "$2" --yes </dev/null 9>&-) >"$OF" 2>"$TMP/ef" &
+		exec timeout $FG -k 10 "$TMO" ./install.sh "$2" --yes </dev/null 9>&-) >"$OF" 2>"$TMP/ef" &
 	BP=$!
 	[ -z "$SIG" ] || kill -TERM "$BP" 2>/dev/null
 	wait "$BP"; RC=$?
@@ -704,7 +707,7 @@ upd_run() {
 }
 
 cmd_update() {
-	SUDO= SELFUP=
+	SELFUP=
 	[ -z "${RITZ_GET_SELF_UPDATED:-}" ] || UP=1
 	if [ $# -eq 0 ]; then
 		for n in $(awk -F"$US" '$1 == "E" && $4 !~ /^https?:/ { print $3 }' "$TMP/mf"); do
@@ -1013,8 +1016,7 @@ main() {
 		[ -n "${RITZ_GET_SELF_UPDATED:-}" ] || lock ;;	# after a self-update exec the fd is inherited
 	esac
 	# RITZ_GET_SUDO for install.sh: passed through if set (the GUI sets pkexec), else sudo on a terminal
-	if [ "$cmd" = update ]; then SUDO=
-	elif [ -n "${RITZ_GET_SUDO+x}" ]; then SUDO=$RITZ_GET_SUDO
+	if [ -n "${RITZ_GET_SUDO+x}" ]; then SUDO=$RITZ_GET_SUDO
 	elif [ -t 0 ]; then SUDO=sudo
 	else SUDO=; fi
 

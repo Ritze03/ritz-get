@@ -1,7 +1,7 @@
 # ritz-get machine-readable output (porcelain 1)
 
 For `ritz-get-gui` and scripts. Everything else ritz-get prints is for humans and may change.
-The GUI sets `RITZ_GET_GUI=1` on every command, and `RITZ_GET_SUDO=pkexec` for install, remove, switch and reset.
+The GUI sets `RITZ_GET_GUI=1` on every command, and `RITZ_GET_SUDO=pkexec` for install, remove, switch, reset and update.
 
 ## `ritz-get list --porcelain [NAME...] [--offline] [--all] [--data]`
 
