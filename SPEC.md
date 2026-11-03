@@ -57,7 +57,7 @@ Always with:
 - **environment** = the user's own, plus:
   - `RITZ_GET_SPEC=1`: the spec version ritz-get speaks.
   - `RITZ_GET_SUDO`: `sudo` (ritz-get run in a terminal) or `pkexec` (GUI password dialog) for
-    interactive commands, empty for unattended `update`. Unset and empty both mean "no root
+    every command, `update` included; empty without a terminal (cron). Unset and empty both mean "no root
     available".
   - `NO_COLOR=1` and `TERM=dumb`.
   - `XDG_*` variables may or may not be set.

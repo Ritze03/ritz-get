@@ -56,6 +56,7 @@ case ${1:-} in
 		echo "missing: noapt (try: pacman:nap)" >&2; exit 3 ;;
 	root) echo "needs root: run ritz-get install @NAME@ in a terminal" >&2; exit 4 ;;
 	fail) echo boom >&2; exit 1 ;;
+	tty) read -r a </dev/tty || exit 1; echo "got=$a" >"$HOME/tty.got" ;;	# what sudo's password prompt does
 	slow) echo $$ >"$HOME/slow.pid"; sleep 30 ;;
 	noisy) echo "compiling @NAME@..."; echo "note: start it with: @NAME@ --daemon"
 		echo "restart: @NAME@ to use the new version" >&2; echo "setup: do the thing"; echo done ;;
@@ -318,6 +319,11 @@ rge RITZ_GET_OS_RELEASE=$T/os-arch update --yes; rc "update exit 3" 3
 has "update needs line" "beta: FAILED (needs: gcc, pkgx)"; has "update deps line" "deps: sudo pacman -S --needed gcc p1 p2"
 newcommit beta root; rg update --yes; rc "update exit 4" 4; has "update repeats needs root" "needs root: run ritz-get install beta"
 newcommit beta ok; rg update --yes; rc "recover beta" 0
+newcommit beta ok; rge RITZ_GET_SUDO=pkexec update --yes; rc "update with pkexec" 0; has "update passes RITZ_GET_SUDO through" "sudo=[pkexec]"
+# terminal sudo: install.sh must be in the foreground group, or reading /dev/tty hangs (timeout without --foreground)
+newcommit beta tty; rm -f "$HOME/tty.got"
+(sleep 2; echo secret) | script -qec "RITZ_GET_TIMEOUT=10 sh $RG update --yes" /dev/null >/dev/null 2>&1; eq "terminal: install.sh reads /dev/tty (timeout --foreground)" "got=secret" "$(cat "$HOME/tty.got" 2>/dev/null)"
+newcommit beta ok; rg update --yes >/dev/null
 
 (cd "$T/work/alpha" && sed -i 's/spec: 1/spec: 2/' install.sh && git commit -qam spec2 && git push -q origin main)
 before=$(sha alpha)
