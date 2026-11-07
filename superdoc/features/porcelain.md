@@ -12,9 +12,7 @@ The stable output a frontend reads is specified in [PORCELAIN.md](../../PORCELAI
 - Other parts of the contract are emitted elsewhere: `#start`/`#progress` in `prog_begin`/`prog_end` ([progress-output](progress-output.md)); the failure trailers in `fail` (`FAILED — your installed version is unchanged and still works`) and `install_one` (`FAILED — nothing was installed` after a failed first install); `deps:` in `print_deps`; the build log in `run_script`; `last-run` in `cmd_update`.
 - Compatibility: column 17 was appended after the first release without bumping the version, because a reader that takes the first 16 columns and ignores the rest keeps working (PORCELAIN.md). Readers must ignore unknown record letters and unknown `#` lines.
 
-## Contradiction found
-
-- PORCELAIN.md (the `delete-data` bullet) says it asks `Delete these? [y/N]`; `delete_one` asks the user to type the repository name (`Type the repository name (REPO) to confirm:`), as README says.
+Known doc/code mismatches in PORCELAIN.md are listed in [remove-and-delete-data](../commands/remove-and-delete-data.md).
 
 ## Related links
 
