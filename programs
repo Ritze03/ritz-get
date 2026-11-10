@@ -53,6 +53,12 @@ gamescope-ritz Ritze03/gamescope-ritz "SteamOS session compositing window manage
   setup: Ritz users: copy its Ritz module by hand, see https://github.com/Ritze03/gamescope-ritz#ritz-launcher-extension
   data: ~/.config/gamescope-ritz
   data: ~/.local/share/gamescope-ritz
+teamspeak-6-mods Ritze03/teamspeak-6-mods "Opt-in mods for the TeamSpeak 6 client: audio AGC, layout, theme, chat, more"
+  title: TeamSpeak 6 Mods
+  setup: Needs the TeamSpeak 6 client (default /opt/teamspeak) and Node.js 22 or newer
+  setup: Then start teamspeak-6-mods and open Settings -> Mods
+  data: ~/.config/ts6-mods
+  data: ~/.local/state/ts6-mods
 
 [Helpers]
 ritz-get Ritze03/ritz-get "Install, update and remove Ritze03's programs, built from source"
