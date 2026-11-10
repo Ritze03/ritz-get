@@ -21,7 +21,7 @@ D<TAB>name<TAB>path<TAB>kb          (only with --data)
 - `E` = one entry, in manifest order (sections in manifest order, then section `Unlisted` last). Always 17 fields; `desc` may be empty. Column 17 (`shortcut`) was appended after the first release of porcelain 1: a parser that reads the first 16 columns and ignores the rest keeps working, so the version stays 1.
 - `S` = one per `setup:` line, in order, right after its `E`. Unlisted entries have none.
 - `D` = leftover data, only with `--data` (without it the output is byte-identical to before): one per path declared by a `data:` line of the entry that EXISTS now, in manifest order, after the entry's `E` and `S` records. `path` is always in `~/…` form (never `~user`), `kb` is `du -sk` of it, or `-` when `du` fails; it is local, so it is filled with `--offline` too. Installed programs get `D` records too ("data: 12 MB"); for a program that is not installed they mean data is left behind (`ritz-get delete-data NAME`). A path containing a tab or newline is never listed, and neither is one that `delete-data` would refuse (outside `$HOME` once resolved, or equal to, inside or above ritz-get's own folders). Websites have none. The human `list` marks such a program `not installed, data left`.
-- `#hidden N` only when N > 0 and `--all` is not given: N programs are not reachable and were left out.
+- `#hidden N` only when N > 0 and `--all` is not given: N programs are not reachable and were left out. This also holds offline: programs that were unreachable on the last online run stay hidden (until a first online run has happened, offline lists every program that is not installed).
 
 | field | values |
 |---|---|

@@ -594,10 +594,12 @@ cmd_list() {
 				inst_fields "$n"; irow "$sec" "$n" "$t" program "$s" installed "$d" "$(sc_col "$n" program)"
 			else
 				st=available lat=-
-				if [ -n "$OFF" ]; then st=offline
+				if [ -n "$OFF" ]; then
+					st=offline; grep -qxF "$n" "$CACHE/unreachable" 2>/dev/null && st=unreachable	# remembered from the last online run
 				elif ! probed_ok "$n"; then
 					if grep -q 429 "$TMP/e.$n"; then st=offline; else st=unreachable; fi
 				else lat=$(awk 'NR == 1 { print substr($1, 1, 7) }' "$TMP/r.$n"); fi
+				[ "$st" = unreachable ] && [ -z "$OFF" ] && echo "$n" >>"$TMP/unr"
 				if [ "$st" = unreachable ] && [ -z "$ALL" ]; then HIDDEN=$((HIDDEN + 1)); continue; fi
 				row "$sec" "$n" "$t" program "$s" "$st" - 0 "${b:--}" - "${lat:--}" - - - "$d" -
 			fi ;;
@@ -609,6 +611,10 @@ cmd_list() {
 		want "$n" || continue
 		inst_fields "$n"; irow Unlisted "$n" "$n" program - unlisted "" -
 	done <"$TMP/unl"
+	if [ -z "$OFF" ] && [ -z "$WANT" ]; then	# full online probe: remember who is unreachable (a subset run would forget the rest)
+		mkdir -p "$CACHE" 2>/dev/null && : >>"$TMP/unr" && cp "$TMP/unr" "$CACHE/unreachable.$$" 2>/dev/null && mv -f "$CACHE/unreachable.$$" "$CACHE/unreachable" 2>/dev/null
+		rm -f "$CACHE/unreachable.$$" 2>/dev/null
+	fi
 	if [ -n "$PORC" ]; then
 		echo "#porcelain 1"
 		if [ -z "$OFF" ]; then echo "#online 1"; else echo "#online 0"; fi
