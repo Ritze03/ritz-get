@@ -44,7 +44,8 @@ Ritz-Get is a POSIX-sh package manager for the author's own programs and website
 ## claude-instructions/ — mandatory rules for agents
 
 - [Working with the Docs](claude-instructions/documentation.md) — read before, update after, record the why.
-- [Version policy](claude-instructions/documentation-version-policy.md) — manual: versions and dates come from the human.
+- [Version policy](claude-instructions/documentation-version-policy.md) — date-based: dated blocks, no version numbers.
+- [Changelog Maintenance](claude-instructions/changelog.md) — every user-facing change adds a short plain-language dated entry to `CHANGELOG.md`.
 
 ## meta/
 
